@@ -1,6 +1,12 @@
 import express from "express";
 
 import {
+  changeCurrentUserPassword,
+  logoutAllDevices,
+  updateCurrentUserProfile,
+} from "../controllers/account.controller.js";
+
+import {
   registerUser,
   resendVerificationOtp,
   verifyEmailOtp,
@@ -11,6 +17,15 @@ import {
   loginUser,
   logoutUser,
 } from "../controllers/authSession.controller.js";
+
+import {
+  loginWithGoogle,
+} from "../controllers/googleAuth.controller.js";
+
+import {
+  forgotPassword,
+  resetPassword,
+} from "../controllers/passwordReset.controller.js";
 
 import {
   authenticate,
@@ -30,23 +45,16 @@ import {
 import validateRequest from "../middleware/validate.middleware.js";
 
 import {
+  changePasswordValidator,
   forgotPasswordValidator,
   googleLoginValidator,
   loginValidator,
   registerValidator,
   resendVerificationOtpValidator,
   resetPasswordValidator,
+  updateProfileValidator,
   verifyEmailOtpValidator,
 } from "../validators/auth.validator.js";
-
-import {
-  forgotPassword,
-  resetPassword,
-} from "../controllers/passwordReset.controller.js";
-
-import {
-  loginWithGoogle,
-} from "../controllers/googleAuth.controller.js";
 
 const router = express.Router();
 
@@ -112,11 +120,36 @@ router.get(
   getCurrentUser
 );
 
+router.patch(
+  "/me",
+  authenticationSessionLimiter,
+  authenticate,
+  updateProfileValidator,
+  validateRequest,
+  updateCurrentUserProfile
+);
+
+router.patch(
+  "/change-password",
+  authenticationSessionLimiter,
+  authenticate,
+  changePasswordValidator,
+  validateRequest,
+  changeCurrentUserPassword
+);
+
 router.post(
   "/logout",
   authenticationSessionLimiter,
   authenticate,
   logoutUser
+);
+
+router.post(
+  "/logout-all",
+  authenticationSessionLimiter,
+  authenticate,
+  logoutAllDevices
 );
 
 export default router;

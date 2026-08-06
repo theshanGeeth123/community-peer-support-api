@@ -2,190 +2,209 @@ import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
 
 import {
-    ACCOUNT_STATUS,
-    AUTH_PROVIDERS,
-    USER_ROLES,
+  ACCOUNT_STATUS,
+  AUTH_PROVIDERS,
+  USER_ROLES,
 } from "../constants/auth.constants.js";
 
 const userSchema = new mongoose.Schema(
-    {
-        fullName: {
-            type: String,
-            required: [true, "Full name is required"],
-            trim: true,
-            minlength: [2, "Full name must contain at least 2 characters"],
-            maxlength: [80, "Full name cannot exceed 80 characters"],
-        },
-
-        email: {
-            type: String,
-            required: [true, "Email address is required"],
-            trim: true,
-            lowercase: true,
-            maxlength: [254, "Email address is too long"],
-        },
-
-        password: {
-            type: String,
-            minlength: [8, "Password must contain at least 8 characters"],
-            select: false,
-        },
-
-        googleId: {
-            type: String,
-            trim: true,
-            select: false,
-        },
-
-        authProviders: {
-            type: [
-                {
-                    type: String,
-                    enum: Object.values(AUTH_PROVIDERS),
-                },
-            ],
-            default: [AUTH_PROVIDERS.LOCAL],
-        },
-
-        role: {
-            type: String,
-            enum: Object.values(USER_ROLES),
-            default: USER_ROLES.USER,
-        },
-
-        avatarUrl: {
-            type: String,
-            trim: true,
-            default: null,
-        },
-
-        isEmailVerified: {
-            type: Boolean,
-            default: false,
-        },
-
-        accountStatus: {
-            type: String,
-            enum: Object.values(ACCOUNT_STATUS),
-            default: ACCOUNT_STATUS.ACTIVE,
-        },
-
-        emailVerificationOtpHash: {
-            type: String,
-            select: false,
-            default: null,
-        },
-
-        emailVerificationOtpExpiresAt: {
-            type: Date,
-            select: false,
-            default: null,
-        },
-
-        emailVerificationOtpSentAt: {
-            type: Date,
-            select: false,
-            default: null,
-        },
-
-        emailVerificationOtpAttemptCount: {
-            type: Number,
-            select: false,
-            default: 0,
-            min: 0,
-        },
-
-        passwordResetOtpHash: {
-            type: String,
-            select: false,
-            default: null,
-        },
-
-        passwordResetOtpExpiresAt: {
-            type: Date,
-            select: false,
-            default: null,
-        },
-
-        passwordResetOtpSentAt: {
-            type: Date,
-            select: false,
-            default: null,
-        },
-
-        passwordResetOtpAttemptCount: {
-            type: Number,
-            select: false,
-            default: 0,
-            min: 0,
-        },
-
-        passwordChangedAt: {
-            type: Date,
-            default: null,
-        },
-
-        lastLoginAt: {
-            type: Date,
-            default: null,
-        },
+  {
+    fullName: {
+      type: String,
+      required: [true, "Full name is required"],
+      trim: true,
+      minlength: [2, "Full name must contain at least 2 characters"],
+      maxlength: [80, "Full name cannot exceed 80 characters"],
     },
-    {
-        timestamps: true,
-        versionKey: false,
-    }
+
+    email: {
+      type: String,
+      required: [true, "Email address is required"],
+      trim: true,
+      lowercase: true,
+      maxlength: [254, "Email address is too long"],
+    },
+
+    password: {
+      type: String,
+      minlength: [8, "Password must contain at least 8 characters"],
+      select: false,
+    },
+
+    googleId: {
+      type: String,
+      trim: true,
+      select: false,
+    },
+
+    authProviders: {
+      type: [
+        {
+          type: String,
+          enum: Object.values(AUTH_PROVIDERS),
+        },
+      ],
+      default: [AUTH_PROVIDERS.LOCAL],
+    },
+
+    role: {
+      type: String,
+      enum: Object.values(USER_ROLES),
+      default: USER_ROLES.USER,
+    },
+
+    avatarUrl: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+
+    isEmailVerified: {
+      type: Boolean,
+      default: false,
+    },
+
+    accountStatus: {
+      type: String,
+      enum: Object.values(ACCOUNT_STATUS),
+      default: ACCOUNT_STATUS.ACTIVE,
+    },
+
+    emailVerificationOtpHash: {
+      type: String,
+      select: false,
+      default: null,
+    },
+
+    emailVerificationOtpExpiresAt: {
+      type: Date,
+      select: false,
+      default: null,
+    },
+
+    emailVerificationOtpSentAt: {
+      type: Date,
+      select: false,
+      default: null,
+    },
+
+    emailVerificationOtpAttemptCount: {
+      type: Number,
+      select: false,
+      default: 0,
+      min: 0,
+    },
+
+    passwordResetOtpHash: {
+      type: String,
+      select: false,
+      default: null,
+    },
+
+    passwordResetOtpExpiresAt: {
+      type: Date,
+      select: false,
+      default: null,
+    },
+
+    passwordResetOtpSentAt: {
+      type: Date,
+      select: false,
+      default: null,
+    },
+
+    passwordResetOtpAttemptCount: {
+      type: Number,
+      select: false,
+      default: 0,
+      min: 0,
+    },
+
+    passwordChangedAt: {
+      type: Date,
+      default: null,
+    },
+
+    lastLoginAt: {
+      type: Date,
+      default: null,
+    },
+  },
+  {
+    timestamps: true,
+    versionKey: false,
+  }
 );
 
 userSchema.index(
-    { email: 1 },
-    {
-        unique: true,
-        name: "unique_user_email",
-    }
+  { email: 1 },
+  {
+    unique: true,
+    name: "unique_user_email",
+  }
 );
 
 userSchema.index(
-    { googleId: 1 },
-    {
-        unique: true,
-        sparse: true,
-        name: "unique_google_id",
-    }
+  { googleId: 1 },
+  {
+    unique: true,
+    sparse: true,
+    name: "unique_google_id",
+  }
 );
 
 userSchema.pre("save", async function () {
-    if (!this.isModified("password") || !this.password) {
-        return;
-    }
+  if (!this.isModified("password") || !this.password) {
+    return;
+  }
 
-    this.password = await bcrypt.hash(this.password, 12);
+  this.password = await bcrypt.hash(this.password, 12);
 
-    if (!this.isNew) {
-        this.passwordChangedAt = new Date();
-    }
+  if (!this.isNew) {
+    this.passwordChangedAt = new Date();
+  }
 });
 
-userSchema.methods.comparePassword = async function (candidatePassword) {
-    if (!this.password) {
-        return false;
-    }
+userSchema.methods.comparePassword = async function (
+  candidatePassword
+) {
+  if (!this.password) {
+    return false;
+  }
 
-    return bcrypt.compare(candidatePassword, this.password);
+  return bcrypt.compare(candidatePassword, this.password);
 };
 
 userSchema.methods.toSafeObject = function () {
-    return {
-        id: this._id.toString(),
-        fullName: this.fullName,
-        email: this.email,
-        role: this.role,
-        avatarUrl: this.avatarUrl,
-        authProviders: this.authProviders,
-        isEmailVerified: this.isEmailVerified,
-        accountStatus: this.accountStatus,
-        createdAt: this.createdAt,
-        updatedAt: this.updatedAt,
-    };
+  return {
+    id: this._id.toString(),
+    fullName: this.fullName,
+    email: this.email,
+    role: this.role,
+    avatarUrl: this.avatarUrl,
+    authProviders: this.authProviders,
+
+    canUsePasswordLogin: this.authProviders.includes(
+      AUTH_PROVIDERS.LOCAL
+    ),
+
+    isEmailVerified: this.isEmailVerified,
+    accountStatus: this.accountStatus,
+    createdAt: this.createdAt,
+    updatedAt: this.updatedAt,
+  };
+};
+
+userSchema.methods.toAdminObject = function () {
+  return {
+    ...this.toSafeObject(),
+
+    hasLocalPassword: Boolean(this.password),
+    isGoogleConnected: Boolean(this.googleId),
+
+    lastLoginAt: this.lastLoginAt,
+    passwordChangedAt: this.passwordChangedAt,
+  };
 };
 
 const User = mongoose.model("User", userSchema);

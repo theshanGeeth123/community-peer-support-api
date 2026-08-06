@@ -95,9 +95,7 @@ export const loginValidator = [
     .withMessage("Email address is required")
     .bail()
     .isEmail()
-    .withMessage(
-      "Please provide a valid email address"
-    )
+    .withMessage("Please provide a valid email address")
     .bail()
     .normalizeEmail(),
 
@@ -114,7 +112,6 @@ export const loginValidator = [
     ),
 ];
 
-
 export const forgotPasswordValidator = [
   body("email")
     .trim()
@@ -122,9 +119,7 @@ export const forgotPasswordValidator = [
     .withMessage("Email address is required")
     .bail()
     .isEmail()
-    .withMessage(
-      "Please provide a valid email address"
-    )
+    .withMessage("Please provide a valid email address")
     .bail()
     .normalizeEmail(),
 ];
@@ -136,18 +131,14 @@ export const resetPasswordValidator = [
     .withMessage("Email address is required")
     .bail()
     .isEmail()
-    .withMessage(
-      "Please provide a valid email address"
-    )
+    .withMessage("Please provide a valid email address")
     .bail()
     .normalizeEmail(),
 
   body("otp")
     .trim()
     .notEmpty()
-    .withMessage(
-      "Password reset code is required"
-    )
+    .withMessage("Password reset code is required")
     .bail()
     .matches(/^\d{6}$/)
     .withMessage(
@@ -159,14 +150,9 @@ export const resetPasswordValidator = [
     .withMessage("New password is required")
     .bail()
     .isString()
-    .withMessage(
-      "New password must be text"
-    )
+    .withMessage("New password must be text")
     .bail()
-    .isLength({
-      min: 8,
-      max: 64,
-    })
+    .isLength({ min: 8, max: 64 })
     .withMessage(
       "New password must contain between 8 and 64 characters"
     )
@@ -201,9 +187,119 @@ export const googleLoginValidator = [
     .isString()
     .withMessage("Google ID token must be text")
     .bail()
-    .isLength({
-      min: 100,
-      max: 5000,
-    })
+    .isLength({ min: 100, max: 5000 })
     .withMessage("Google ID token format is invalid"),
+];
+
+export const updateProfileValidator = [
+  body().custom((value, { req }) => {
+    const allowedFields = ["fullName", "avatarUrl"];
+    const providedFields = Object.keys(req.body);
+
+    if (providedFields.length === 0) {
+      throw new Error(
+        "Provide at least one profile field to update"
+      );
+    }
+
+    const unsupportedFields = providedFields.filter(
+      (field) => !allowedFields.includes(field)
+    );
+
+    if (unsupportedFields.length > 0) {
+      throw new Error(
+        `Unsupported profile field: ${unsupportedFields.join(", ")}`
+      );
+    }
+
+    return true;
+  }),
+
+  body("fullName")
+    .optional()
+    .trim()
+    .notEmpty()
+    .withMessage("Full name cannot be empty")
+    .bail()
+    .isLength({ min: 2, max: 80 })
+    .withMessage(
+      "Full name must contain between 2 and 80 characters"
+    ),
+
+  body("avatarUrl")
+    .optional({ nullable: true })
+    .custom((value) => {
+      if (value === null) {
+        return true;
+      }
+
+      if (typeof value !== "string") {
+        throw new Error("Avatar URL must be text or null");
+      }
+
+      const trimmedValue = value.trim();
+
+      if (!trimmedValue) {
+        throw new Error("Avatar URL cannot be empty");
+      }
+
+      try {
+        const parsedUrl = new URL(trimmedValue);
+
+        if (
+          !["http:", "https:"].includes(
+            parsedUrl.protocol
+          )
+        ) {
+          throw new Error();
+        }
+      } catch {
+        throw new Error(
+          "Please provide a valid avatar URL"
+        );
+      }
+
+      return true;
+    }),
+];
+
+export const changePasswordValidator = [
+  body("currentPassword")
+    .notEmpty()
+    .withMessage("Current password is required")
+    .bail()
+    .isString()
+    .withMessage("Current password must be text"),
+
+  body("newPassword")
+    .notEmpty()
+    .withMessage("New password is required")
+    .bail()
+    .isString()
+    .withMessage("New password must be text")
+    .bail()
+    .isLength({ min: 8, max: 64 })
+    .withMessage(
+      "New password must contain between 8 and 64 characters"
+    )
+    .bail()
+    .matches(/[a-z]/)
+    .withMessage(
+      "New password must contain at least one lowercase letter"
+    )
+    .bail()
+    .matches(/[A-Z]/)
+    .withMessage(
+      "New password must contain at least one uppercase letter"
+    )
+    .bail()
+    .matches(/[0-9]/)
+    .withMessage(
+      "New password must contain at least one number"
+    )
+    .bail()
+    .matches(/[^A-Za-z0-9]/)
+    .withMessage(
+      "New password must contain at least one special character"
+    ),
 ];
