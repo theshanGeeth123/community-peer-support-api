@@ -1,0 +1,54 @@
+# Dependencies
+node_modules/
+
+# Environment variables and secrets
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+
+# Keep environment variable template
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build and coverage
+dist/
+build/
+coverage/
+.nyc_output/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+*.swp
+
+# Uploaded files
+uploads/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# IDE and editor settings
+.vscode/
+.idea/
+*.code-workspace
+
+# Runtime files
+*.pid
+*.pid.lock
+pids/
+
+# Testing cache
+.jest/
+.cache/
