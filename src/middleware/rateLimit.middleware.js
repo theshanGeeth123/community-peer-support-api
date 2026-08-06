@@ -65,3 +65,31 @@ export const authenticationSessionLimiter =
       "Too many authentication requests. Please try again later."
     ),
   });
+
+  export const forgotPasswordLimiter =
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+
+    limit: isDevelopment ? 100 : 5,
+
+    standardHeaders: true,
+    legacyHeaders: false,
+
+    message: createRateLimitResponse(
+      "Too many password reset requests. Please try again after 15 minutes."
+    ),
+  });
+
+export const resetPasswordLimiter =
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+
+    limit: isDevelopment ? 100 : 10,
+
+    standardHeaders: true,
+    legacyHeaders: false,
+
+    message: createRateLimitResponse(
+      "Too many password reset attempts. Please try again after 15 minutes."
+    ),
+  });

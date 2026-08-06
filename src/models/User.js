@@ -95,16 +95,29 @@ const userSchema = new mongoose.Schema(
             min: 0,
         },
 
-        passwordResetTokenHash: {
+        passwordResetOtpHash: {
             type: String,
             select: false,
             default: null,
         },
 
-        passwordResetExpiresAt: {
+        passwordResetOtpExpiresAt: {
             type: Date,
             select: false,
             default: null,
+        },
+
+        passwordResetOtpSentAt: {
+            type: Date,
+            select: false,
+            default: null,
+        },
+
+        passwordResetOtpAttemptCount: {
+            type: Number,
+            select: false,
+            default: 0,
+            min: 0,
         },
 
         passwordChangedAt: {

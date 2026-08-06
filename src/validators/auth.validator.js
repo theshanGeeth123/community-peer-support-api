@@ -115,4 +115,79 @@ export const loginValidator = [
 ];
 
 
+export const forgotPasswordValidator = [
+  body("email")
+    .trim()
+    .notEmpty()
+    .withMessage("Email address is required")
+    .bail()
+    .isEmail()
+    .withMessage(
+      "Please provide a valid email address"
+    )
+    .bail()
+    .normalizeEmail(),
+];
 
+export const resetPasswordValidator = [
+  body("email")
+    .trim()
+    .notEmpty()
+    .withMessage("Email address is required")
+    .bail()
+    .isEmail()
+    .withMessage(
+      "Please provide a valid email address"
+    )
+    .bail()
+    .normalizeEmail(),
+
+  body("otp")
+    .trim()
+    .notEmpty()
+    .withMessage(
+      "Password reset code is required"
+    )
+    .bail()
+    .matches(/^\d{6}$/)
+    .withMessage(
+      "Password reset code must contain exactly six digits"
+    ),
+
+  body("newPassword")
+    .notEmpty()
+    .withMessage("New password is required")
+    .bail()
+    .isString()
+    .withMessage(
+      "New password must be text"
+    )
+    .bail()
+    .isLength({
+      min: 8,
+      max: 64,
+    })
+    .withMessage(
+      "New password must contain between 8 and 64 characters"
+    )
+    .bail()
+    .matches(/[a-z]/)
+    .withMessage(
+      "New password must contain at least one lowercase letter"
+    )
+    .bail()
+    .matches(/[A-Z]/)
+    .withMessage(
+      "New password must contain at least one uppercase letter"
+    )
+    .bail()
+    .matches(/[0-9]/)
+    .withMessage(
+      "New password must contain at least one number"
+    )
+    .bail()
+    .matches(/[^A-Za-z0-9]/)
+    .withMessage(
+      "New password must contain at least one special character"
+    ),
+];

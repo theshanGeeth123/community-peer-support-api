@@ -19,19 +19,28 @@ import {
 import {
   authenticationSessionLimiter,
   emailVerificationLimiter,
+  forgotPasswordLimiter,
   loginLimiter,
   registrationLimiter,
   resendVerificationLimiter,
+  resetPasswordLimiter,
 } from "../middleware/rateLimit.middleware.js";
 
 import validateRequest from "../middleware/validate.middleware.js";
 
 import {
+  forgotPasswordValidator,
   loginValidator,
   registerValidator,
   resendVerificationOtpValidator,
+  resetPasswordValidator,
   verifyEmailOtpValidator,
 } from "../validators/auth.validator.js";
+
+import {
+  forgotPassword,
+  resetPassword,
+} from "../controllers/passwordReset.controller.js";
 
 const router = express.Router();
 
@@ -57,6 +66,22 @@ router.post(
   resendVerificationOtpValidator,
   validateRequest,
   resendVerificationOtp
+);
+
+router.post(
+  "/forgot-password",
+  forgotPasswordLimiter,
+  forgotPasswordValidator,
+  validateRequest,
+  forgotPassword
+);
+
+router.post(
+  "/reset-password",
+  resetPasswordLimiter,
+  resetPasswordValidator,
+  validateRequest,
+  resetPassword
 );
 
 router.post(
