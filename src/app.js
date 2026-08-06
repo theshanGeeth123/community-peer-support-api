@@ -11,6 +11,8 @@ import {
   notFoundHandler,
 } from "./middleware/error.middleware.js";
 
+import adminRoutes from "./routes/admin.routes.js";
+
 const app = express();
 
 app.disable("x-powered-by");
@@ -39,6 +41,7 @@ if (process.env.NODE_ENV === "development") {
 
 app.use("/api/v1/health", healthRoutes);
 app.use("/api/v1/auth", authRoutes);
+app.use("/api/v1/admin", adminRoutes);
 
 app.use(notFoundHandler);
 app.use(globalErrorHandler);

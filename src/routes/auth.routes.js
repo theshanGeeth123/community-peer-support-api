@@ -20,6 +20,7 @@ import {
   authenticationSessionLimiter,
   emailVerificationLimiter,
   forgotPasswordLimiter,
+  googleLoginLimiter,
   loginLimiter,
   registrationLimiter,
   resendVerificationLimiter,
@@ -30,6 +31,7 @@ import validateRequest from "../middleware/validate.middleware.js";
 
 import {
   forgotPasswordValidator,
+  googleLoginValidator,
   loginValidator,
   registerValidator,
   resendVerificationOtpValidator,
@@ -41,6 +43,10 @@ import {
   forgotPassword,
   resetPassword,
 } from "../controllers/passwordReset.controller.js";
+
+import {
+  loginWithGoogle,
+} from "../controllers/googleAuth.controller.js";
 
 const router = express.Router();
 
@@ -82,6 +88,14 @@ router.post(
   resetPasswordValidator,
   validateRequest,
   resetPassword
+);
+
+router.post(
+  "/google",
+  googleLoginLimiter,
+  googleLoginValidator,
+  validateRequest,
+  loginWithGoogle
 );
 
 router.post(

@@ -93,3 +93,17 @@ export const resetPasswordLimiter =
       "Too many password reset attempts. Please try again after 15 minutes."
     ),
   });
+
+  export const googleLoginLimiter =
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+
+    limit: isDevelopment ? 100 : 10,
+
+    standardHeaders: true,
+    legacyHeaders: false,
+
+    message: createRateLimitResponse(
+      "Too many Google login attempts. Please try again after 15 minutes."
+    ),
+  });

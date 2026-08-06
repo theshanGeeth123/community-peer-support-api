@@ -191,3 +191,19 @@ export const resetPasswordValidator = [
       "New password must contain at least one special character"
     ),
 ];
+
+export const googleLoginValidator = [
+  body("idToken")
+    .trim()
+    .notEmpty()
+    .withMessage("Google ID token is required")
+    .bail()
+    .isString()
+    .withMessage("Google ID token must be text")
+    .bail()
+    .isLength({
+      min: 100,
+      max: 5000,
+    })
+    .withMessage("Google ID token format is invalid"),
+];
