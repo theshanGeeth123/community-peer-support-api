@@ -5,19 +5,25 @@ import morgan from "morgan";
 
 import authRoutes from "./routes/auth.routes.js";
 import healthRoutes from "./routes/health.routes.js";
+import adminRoutes from "./routes/admin.routes.js";
+import groupRoutes from "./routes/group.routes.js";
+import groupMembershipRoutes from "./routes/groupMembership.routes.js";
 
 import {
   globalErrorHandler,
   notFoundHandler,
 } from "./middleware/error.middleware.js";
 
-import adminRoutes from "./routes/admin.routes.js";
+const app =
+  express();
 
-const app = express();
+app.disable(
+  "x-powered-by"
+);
 
-app.disable("x-powered-by");
-
-app.use(helmet());
+app.use(
+  helmet()
+);
 
 app.use(
   cors({
@@ -26,7 +32,9 @@ app.use(
   })
 );
 
-app.use(express.json());
+app.use(
+  express.json()
+);
 
 app.use(
   express.urlencoded({
@@ -35,15 +43,58 @@ app.use(
   })
 );
 
-if (process.env.NODE_ENV === "development") {
-  app.use(morgan("dev"));
+if (
+  process.env.NODE_ENV ===
+  "development"
+) {
+  app.use(
+    morgan("dev")
+  );
 }
 
-app.use("/api/v1/health", healthRoutes);
-app.use("/api/v1/auth", authRoutes);
-app.use("/api/v1/admin", adminRoutes);
+/*
+|--------------------------------------------------------------------------
+| API ROUTES
+|--------------------------------------------------------------------------
+*/
 
-app.use(notFoundHandler);
-app.use(globalErrorHandler);
+app.use(
+  "/api/v1/health",
+  healthRoutes
+);
+
+app.use(
+  "/api/v1/auth",
+  authRoutes
+);
+
+app.use(
+  "/api/v1/admin",
+  adminRoutes
+);
+
+app.use(
+  "/api/v1/groups",
+  groupRoutes
+);
+
+app.use(
+  "/api/v1/group-memberships",
+  groupMembershipRoutes
+);
+
+/*
+|--------------------------------------------------------------------------
+| ERROR HANDLING
+|--------------------------------------------------------------------------
+*/
+
+app.use(
+  notFoundHandler
+);
+
+app.use(
+  globalErrorHandler
+);
 
 export default app;
