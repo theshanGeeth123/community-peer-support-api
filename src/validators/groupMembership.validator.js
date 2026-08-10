@@ -16,15 +16,12 @@ export const joinGroupValidator = [
       "Join request reason is required"
     )
     .bail()
-
     .isString()
     .withMessage(
       "Join request reason must be text"
     )
     .bail()
-
     .trim()
-
     .isLength({
       min: 10,
       max: 500,
@@ -53,19 +50,77 @@ export const reviewJoinRequestValidator = [
     .optional({
       nullable: true,
     })
-
     .isString()
     .withMessage(
       "Review note must be text"
     )
     .bail()
-
     .trim()
-
     .isLength({
       max: 500,
     })
     .withMessage(
       "Review note cannot exceed 500 characters"
+    ),
+];
+
+export const moderatorGroupMembersValidator = [
+  param("groupId")
+    .isMongoId()
+    .withMessage(
+      "Invalid group ID"
+    ),
+];
+
+export const moderateMembershipValidator = [
+  param("membershipId")
+    .isMongoId()
+    .withMessage(
+      "Invalid membership ID"
+    ),
+
+  body("reason")
+    .notEmpty()
+    .withMessage(
+      "Reason is required"
+    )
+    .bail()
+    .isString()
+    .withMessage(
+      "Reason must be text"
+    )
+    .bail()
+    .trim()
+    .isLength({
+      min: 5,
+      max: 500,
+    })
+    .withMessage(
+      "Reason must contain between 5 and 500 characters"
+    ),
+];
+
+export const reactivateMembershipValidator = [
+  param("membershipId")
+    .isMongoId()
+    .withMessage(
+      "Invalid membership ID"
+    ),
+
+  body("reason")
+    .optional({
+      nullable: true,
+    })
+    .isString()
+    .withMessage(
+      "Reason must be text"
+    )
+    .bail()
+    .trim()
+    .isLength({
+      max: 500,
+    })
+    .withMessage(
+      "Reason cannot exceed 500 characters"
     ),
 ];

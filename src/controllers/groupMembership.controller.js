@@ -24,9 +24,7 @@ const normalizeOptionalText = (
   const trimmedValue =
     value.trim();
 
-  return (
-    trimmedValue || null
-  );
+  return trimmedValue || null;
 };
 
 const populateJoinRequest = (
@@ -35,21 +33,37 @@ const populateJoinRequest = (
   return query
     .populate({
       path: "group",
-
       select:
         "name description category communityLocation status",
     })
-
     .populate({
       path: "user",
-
       select:
         "fullName email role avatarUrl accountStatus",
     })
-
     .populate({
       path: "reviewedBy",
+      select:
+        "fullName email role avatarUrl",
+    });
+};
 
+const populateMembership = (
+  query
+) => {
+  return query
+    .populate({
+      path: "group",
+      select:
+        "name description category communityLocation status moderators peerSupporters",
+    })
+    .populate({
+      path: "user",
+      select:
+        "fullName email role avatarUrl accountStatus",
+    })
+    .populate({
+      path: "lastUpdatedBy",
       select:
         "fullName email role avatarUrl",
     });
@@ -63,7 +77,6 @@ const getActiveGroupOrThrow =
       await SupportGroup.findOne(
         {
           _id: groupId,
-
           status:
             GROUP_STATUS.ACTIVE,
         }
@@ -107,6 +120,34 @@ const getAssignedGroupForPeerSupporterOrThrow =
     return group;
   };
 
+const getAssignedGroupForModeratorOrThrow =
+  async (
+    groupId,
+    moderatorId
+  ) => {
+    const group =
+      await SupportGroup.findOne(
+        {
+          _id: groupId,
+
+          status:
+            GROUP_STATUS.ACTIVE,
+
+          moderators:
+            moderatorId,
+        }
+      );
+
+    if (!group) {
+      throw new AppError(
+        "You are not assigned as a Moderator for this group",
+        403
+      );
+    }
+
+    return group;
+  };
+
 const getPendingRequestOrThrow =
   async (
     requestId
@@ -136,6 +177,31 @@ const getPendingRequestOrThrow =
     return joinRequest;
   };
 
+const getMembershipForModeratorOrThrow =
+  async (
+    membershipId,
+    moderatorId
+  ) => {
+    const membership =
+      await GroupMembership.findById(
+        membershipId
+      );
+
+    if (!membership) {
+      throw new AppError(
+        "Group membership was not found",
+        404
+      );
+    }
+
+    await getAssignedGroupForModeratorOrThrow(
+      membership.group,
+      moderatorId
+    );
+
+    return membership;
+  };
+
 /*
 |--------------------------------------------------------------------------
 | USER - SEND JOIN REQUEST
@@ -150,8 +216,7 @@ export const requestToJoinGroup =
     ) => {
       const group =
         await getActiveGroupOrThrow(
-          req.params
-            .groupId
+          req.params.groupId
         );
 
       const existingMembership =
@@ -166,8 +231,7 @@ export const requestToJoinGroup =
         );
 
       if (
-        existingMembership
-          ?.status ===
+        existingMembership?.status ===
         GROUP_MEMBERSHIP_STATUS.ACTIVE
       ) {
         throw new AppError(
@@ -177,8 +241,7 @@ export const requestToJoinGroup =
       }
 
       if (
-        existingMembership
-          ?.status ===
+        existingMembership?.status ===
         GROUP_MEMBERSHIP_STATUS.SUSPENDED
       ) {
         throw new AppError(
@@ -188,8 +251,7 @@ export const requestToJoinGroup =
       }
 
       if (
-        existingMembership
-          ?.status ===
+        existingMembership?.status ===
         GROUP_MEMBERSHIP_STATUS.REMOVED
       ) {
         throw new AppError(
@@ -371,7 +433,6 @@ export const getMyJoinedGroups =
               },
             ],
           })
-
           .sort({
             joinedAt: -1,
           });
@@ -410,7 +471,7 @@ export const getMyJoinedGroups =
 
 /*
 |--------------------------------------------------------------------------
-| PEER SUPPORTER - PENDING REQUESTS FOR ASSIGNED GROUP
+| PEER SUPPORTER - GET PENDING REQUESTS
 |--------------------------------------------------------------------------
 */
 
@@ -422,9 +483,7 @@ export const getGroupJoinRequests =
     ) => {
       const group =
         await getAssignedGroupForPeerSupporterOrThrow(
-          req.params
-            .groupId,
-
+          req.params.groupId,
           req.user._id
         );
 
@@ -477,7 +536,7 @@ export const getGroupJoinRequests =
 
 /*
 |--------------------------------------------------------------------------
-| PEER SUPPORTER - APPROVE REQUEST
+| PEER SUPPORTER - APPROVE
 |--------------------------------------------------------------------------
 */
 
@@ -489,8 +548,7 @@ export const approveJoinRequest =
     ) => {
       const joinRequest =
         await getPendingRequestOrThrow(
-          req.params
-            .requestId
+          req.params.requestId
         );
 
       await getAssignedGroupForPeerSupporterOrThrow(
@@ -510,8 +568,7 @@ export const approveJoinRequest =
         );
 
       if (
-        existingMembership
-          ?.status ===
+        existingMembership?.status ===
         GROUP_MEMBERSHIP_STATUS.SUSPENDED
       ) {
         throw new AppError(
@@ -521,8 +578,7 @@ export const approveJoinRequest =
       }
 
       if (
-        existingMembership
-          ?.status ===
+        existingMembership?.status ===
         GROUP_MEMBERSHIP_STATUS.REMOVED
       ) {
         throw new AppError(
@@ -581,8 +637,7 @@ export const approveJoinRequest =
 
       joinRequest.reviewNote =
         normalizeOptionalText(
-          req.body
-            .reviewNote
+          req.body.reviewNote
         );
 
       joinRequest.reviewedAt =
@@ -615,7 +670,7 @@ export const approveJoinRequest =
 
 /*
 |--------------------------------------------------------------------------
-| PEER SUPPORTER - REJECT REQUEST
+| PEER SUPPORTER - REJECT
 |--------------------------------------------------------------------------
 */
 
@@ -627,8 +682,7 @@ export const rejectJoinRequest =
     ) => {
       const joinRequest =
         await getPendingRequestOrThrow(
-          req.params
-            .requestId
+          req.params.requestId
         );
 
       await getAssignedGroupForPeerSupporterOrThrow(
@@ -644,8 +698,7 @@ export const rejectJoinRequest =
 
       joinRequest.reviewNote =
         normalizeOptionalText(
-          req.body
-            .reviewNote
+          req.body.reviewNote
         );
 
       joinRequest.reviewedAt =
@@ -671,6 +724,284 @@ export const rejectJoinRequest =
           data: {
             joinRequest:
               populatedRequest.toSafeObject(),
+          },
+        });
+    }
+  );
+
+/*
+|--------------------------------------------------------------------------
+| MODERATOR - GROUP MEMBERS
+|--------------------------------------------------------------------------
+*/
+
+export const getModeratorGroupMembers =
+  asyncHandler(
+    async (
+      req,
+      res
+    ) => {
+      const group =
+        await getAssignedGroupForModeratorOrThrow(
+          req.params.groupId,
+          req.user._id
+        );
+
+      const memberships =
+        await populateMembership(
+          GroupMembership.find(
+            {
+              group:
+                group._id,
+            }
+          ).sort({
+            joinedAt: -1,
+          })
+        );
+
+      return res
+        .status(200)
+        .json({
+          success: true,
+
+          message:
+            "Group members retrieved successfully",
+
+          data: {
+            group: {
+              id:
+                group._id.toString(),
+
+              name:
+                group.name,
+            },
+
+            memberships:
+              memberships.map(
+                (
+                  membership
+                ) =>
+                  membership.toSafeObject()
+              ),
+
+            totalMembers:
+              memberships.length,
+          },
+        });
+    }
+  );
+
+/*
+|--------------------------------------------------------------------------
+| MODERATOR - SUSPEND MEMBER
+|--------------------------------------------------------------------------
+*/
+
+export const suspendGroupMembership =
+  asyncHandler(
+    async (
+      req,
+      res
+    ) => {
+      const membership =
+        await getMembershipForModeratorOrThrow(
+          req.params.membershipId,
+          req.user._id
+        );
+
+      if (
+        membership.status ===
+        GROUP_MEMBERSHIP_STATUS.REMOVED
+      ) {
+        throw new AppError(
+          "Removed memberships cannot be suspended",
+          409
+        );
+      }
+
+      if (
+        membership.status ===
+        GROUP_MEMBERSHIP_STATUS.SUSPENDED
+      ) {
+        throw new AppError(
+          "This membership is already suspended",
+          409
+        );
+      }
+
+      membership.status =
+        GROUP_MEMBERSHIP_STATUS.SUSPENDED;
+
+      membership.suspendedAt =
+        new Date();
+
+      membership.removedAt =
+        null;
+
+      membership.lastUpdatedBy =
+        req.user._id;
+
+      membership.statusReason =
+        req.body.reason.trim();
+
+      await membership.save();
+
+      const populatedMembership =
+        await populateMembership(
+          GroupMembership.findById(
+            membership._id
+          )
+        );
+
+      return res
+        .status(200)
+        .json({
+          success: true,
+
+          message:
+            "Group membership suspended successfully",
+
+          data: {
+            membership:
+              populatedMembership.toSafeObject(),
+          },
+        });
+    }
+  );
+
+/*
+|--------------------------------------------------------------------------
+| MODERATOR - REACTIVATE SUSPENDED MEMBER
+|--------------------------------------------------------------------------
+*/
+
+export const reactivateGroupMembership =
+  asyncHandler(
+    async (
+      req,
+      res
+    ) => {
+      const membership =
+        await getMembershipForModeratorOrThrow(
+          req.params.membershipId,
+          req.user._id
+        );
+
+      if (
+        membership.status !==
+        GROUP_MEMBERSHIP_STATUS.SUSPENDED
+      ) {
+        throw new AppError(
+          "Only suspended memberships can be reactivated",
+          409
+        );
+      }
+
+      membership.status =
+        GROUP_MEMBERSHIP_STATUS.ACTIVE;
+
+      membership.suspendedAt =
+        null;
+
+      membership.removedAt =
+        null;
+
+      membership.lastUpdatedBy =
+        req.user._id;
+
+      membership.statusReason =
+        normalizeOptionalText(
+          req.body.reason
+        );
+
+      await membership.save();
+
+      const populatedMembership =
+        await populateMembership(
+          GroupMembership.findById(
+            membership._id
+          )
+        );
+
+      return res
+        .status(200)
+        .json({
+          success: true,
+
+          message:
+            "Group membership reactivated successfully",
+
+          data: {
+            membership:
+              populatedMembership.toSafeObject(),
+          },
+        });
+    }
+  );
+
+/*
+|--------------------------------------------------------------------------
+| MODERATOR - REMOVE MEMBER
+|--------------------------------------------------------------------------
+*/
+
+export const removeGroupMembership =
+  asyncHandler(
+    async (
+      req,
+      res
+    ) => {
+      const membership =
+        await getMembershipForModeratorOrThrow(
+          req.params.membershipId,
+          req.user._id
+        );
+
+      if (
+        membership.status ===
+        GROUP_MEMBERSHIP_STATUS.REMOVED
+      ) {
+        throw new AppError(
+          "This membership has already been removed",
+          409
+        );
+      }
+
+      membership.status =
+        GROUP_MEMBERSHIP_STATUS.REMOVED;
+
+      membership.removedAt =
+        new Date();
+
+      membership.suspendedAt =
+        null;
+
+      membership.lastUpdatedBy =
+        req.user._id;
+
+      membership.statusReason =
+        req.body.reason.trim();
+
+      await membership.save();
+
+      const populatedMembership =
+        await populateMembership(
+          GroupMembership.findById(
+            membership._id
+          )
+        );
+
+      return res
+        .status(200)
+        .json({
+          success: true,
+
+          message:
+            "Member removed from group successfully",
+
+          data: {
+            membership:
+              populatedMembership.toSafeObject(),
           },
         });
     }
