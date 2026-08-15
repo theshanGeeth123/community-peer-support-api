@@ -8,6 +8,7 @@ import healthRoutes from "./routes/health.routes.js";
 import adminRoutes from "./routes/admin.routes.js";
 import groupRoutes from "./routes/group.routes.js";
 import groupMembershipRoutes from "./routes/groupMembership.routes.js";
+import postRoutes from "./routes/post.routes.js";
 
 import {
   globalErrorHandler,
@@ -81,6 +82,11 @@ app.use(
 app.use(
   "/api/v1/group-memberships",
   groupMembershipRoutes
+);
+
+app.use(
+  "/api/v1",
+  postRoutes
 );
 
 /*
