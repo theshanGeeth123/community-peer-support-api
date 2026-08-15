@@ -9,6 +9,7 @@ import adminRoutes from "./routes/admin.routes.js";
 import groupRoutes from "./routes/group.routes.js";
 import groupMembershipRoutes from "./routes/groupMembership.routes.js";
 import postRoutes from "./routes/post.routes.js";
+import globalPostRoutes from "./routes/globalPost.routes.js";
 
 import {
   globalErrorHandler,
@@ -87,6 +88,11 @@ app.use(
 app.use(
   "/api/v1",
   postRoutes
+);
+
+app.use(
+  "/api/v1/community",
+  globalPostRoutes
 );
 
 /*
