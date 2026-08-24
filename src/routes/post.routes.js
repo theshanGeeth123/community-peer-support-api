@@ -1,9 +1,7 @@
 import express from "express";
 
 import {
-  createComment,
   createPost,
-  deleteComment,
   deletePost,
   getGroupPosts,
   getMyFeed,
@@ -13,9 +11,20 @@ import {
   togglePostPin,
 } from "../controllers/post.controller.js";
 
+import {
+  createComment,
+  updateComment,
+  deleteComment,
+  createReply,
+  toggleCommentHeart,
+} from "../controllers/postEngagement.controller.js";
+
 import { USER_ROLES } from "../constants/auth.constants.js";
 
-import { authenticate, authorizeRoles } from "../middleware/auth.middleware.js";
+import {
+  authenticate,
+  authorizeRoles,
+} from "../middleware/auth.middleware.js";
 
 import validateRequest from "../middleware/validate.middleware.js";
 
@@ -111,6 +120,9 @@ router.post(
 |--------------------------------------------------------------------------
 */
 
+/*
+ * Get all comments for a post
+ */
 router.get(
   "/posts/:postId/comments",
   postIdParamValidator,
@@ -118,6 +130,9 @@ router.get(
   getPostComments
 );
 
+/*
+ * Create a new comment
+ */
 router.post(
   "/posts/:postId/comments",
   createCommentValidator,
@@ -125,11 +140,44 @@ router.post(
   createComment
 );
 
+/*
+ * Update an existing comment
+ */
+router.patch(
+  "/comments/:commentId",
+  commentIdParamValidator,
+  validateRequest,
+  updateComment
+);
+
+/*
+ * Delete a comment
+ */
 router.delete(
   "/comments/:commentId",
   commentIdParamValidator,
   validateRequest,
   deleteComment
+);
+
+/*
+ * Reply to a comment
+ */
+router.post(
+  "/comments/:commentId/replies",
+  commentIdParamValidator,
+  validateRequest,
+  createReply
+);
+
+/*
+ * Heart / unheart a comment
+ */
+router.post(
+  "/comments/:commentId/heart",
+  commentIdParamValidator,
+  validateRequest,
+  toggleCommentHeart
 );
 
 export default router;
