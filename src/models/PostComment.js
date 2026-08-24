@@ -23,12 +23,32 @@ const postCommentSchema = new mongoose.Schema(
       index: true,
     },
 
+    /*
+    |--------------------------------------------------------------------------
+    | REPLY SUPPORT
+    |--------------------------------------------------------------------------
+    |
+    | null = normal/top-level comment
+    | commentId = reply to that comment
+    |
+    */
+
+    parentComment: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "PostComment",
+      default: null,
+      index: true,
+    },
+
     content: {
       type: String,
       required: [true, "Comment content is required"],
       trim: true,
       minlength: [1, "Comment content cannot be empty"],
-      maxlength: [1000, "Comment content cannot exceed 1000 characters"],
+      maxlength: [
+        1000,
+        "Comment content cannot exceed 1000 characters",
+      ],
     },
   },
   {
@@ -37,7 +57,15 @@ const postCommentSchema = new mongoose.Schema(
   }
 );
 
-postCommentSchema.index({ post: 1, createdAt: 1 });
+postCommentSchema.index({
+  post: 1,
+  createdAt: 1,
+});
+
+postCommentSchema.index({
+  parentComment: 1,
+  createdAt: 1,
+});
 
 postCommentSchema.methods.toSafeObject = function () {
   return {
@@ -46,11 +74,15 @@ postCommentSchema.methods.toSafeObject = function () {
     group: this.group,
     author: this.author,
     content: this.content,
+    parentComment: this.parentComment,
     createdAt: this.createdAt,
     updatedAt: this.updatedAt,
   };
 };
 
-const PostComment = mongoose.model("PostComment", postCommentSchema);
+const PostComment = mongoose.model(
+  "PostComment",
+  postCommentSchema
+);
 
 export default PostComment;
