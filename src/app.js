@@ -5,6 +5,7 @@ import morgan from "morgan";
 
 import authRoutes from "./routes/auth.routes.js";
 import healthRoutes from "./routes/health.routes.js";
+import reportRoutes from "./routes/report.routes.js";
 
 import {
   globalErrorHandler,
@@ -42,6 +43,7 @@ if (process.env.NODE_ENV === "development") {
 app.use("/api/v1/health", healthRoutes);
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/admin", adminRoutes);
+app.use("/api/v1/reports", reportRoutes);
 
 app.use(notFoundHandler);
 app.use(globalErrorHandler);
