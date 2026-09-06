@@ -5,14 +5,17 @@ import morgan from "morgan";
 
 import authRoutes from "./routes/auth.routes.js";
 import healthRoutes from "./routes/health.routes.js";
+import adminRoutes from "./routes/admin.routes.js";
+import groupRoutes from "./routes/group.routes.js";
+import groupMembershipRoutes from "./routes/groupMembership.routes.js";
+import postRoutes from "./routes/post.routes.js";
+import globalPostRoutes from "./routes/globalPost.routes.js";
 import reportRoutes from "./routes/report.routes.js";
 
 import {
   globalErrorHandler,
   notFoundHandler,
 } from "./middleware/error.middleware.js";
-
-import adminRoutes from "./routes/admin.routes.js";
 
 const app = express();
 
@@ -40,10 +43,26 @@ if (process.env.NODE_ENV === "development") {
   app.use(morgan("dev"));
 }
 
+/*
+|--------------------------------------------------------------------------
+| API ROUTES
+|--------------------------------------------------------------------------
+*/
+
 app.use("/api/v1/health", healthRoutes);
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/admin", adminRoutes);
+app.use("/api/v1/groups", groupRoutes);
+app.use("/api/v1/group-memberships", groupMembershipRoutes);
+app.use("/api/v1", postRoutes);
+app.use("/api/v1/community", globalPostRoutes);
 app.use("/api/v1/reports", reportRoutes);
+
+/*
+|--------------------------------------------------------------------------
+| ERROR HANDLING
+|--------------------------------------------------------------------------
+*/
 
 app.use(notFoundHandler);
 app.use(globalErrorHandler);
