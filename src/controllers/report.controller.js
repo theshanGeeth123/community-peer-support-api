@@ -1,4 +1,4 @@
-import ModerationAction from "../models/ModerationAction.js";
+﻿import ModerationAction from "../models/ModerationAction.js";
 import Report from "../models/Report.js";
 
 import { REPORT_STATUS } from "../constants/moderation.constants.js";
@@ -6,7 +6,7 @@ import { REPORT_STATUS } from "../constants/moderation.constants.js";
 import AppError from "../utils/AppError.js";
 import asyncHandler from "../utils/asyncHandler.js";
 
-// ─── POST /reports ────────────────────────────────────────────────────────────
+// â”€â”€â”€ POST /reports â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const submitReport = asyncHandler(async (req, res) => {
   const { group, targetType, targetId, reason, additionalDetails } = req.body;
@@ -45,7 +45,7 @@ export const submitReport = asyncHandler(async (req, res) => {
   });
 });
 
-// ─── GET /reports ─────────────────────────────────────────────────────────────
+// â”€â”€â”€ GET /reports â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const getReports = asyncHandler(async (req, res) => {
   const page = req.query.page || 1;
@@ -101,7 +101,7 @@ export const getReports = asyncHandler(async (req, res) => {
   });
 });
 
-// ─── GET /reports/:reportId ───────────────────────────────────────────────────
+// â”€â”€â”€ GET /reports/:reportId â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const getReportById = asyncHandler(async (req, res) => {
   const report = await Report.findById(req.params.reportId)
@@ -112,17 +112,25 @@ export const getReportById = asyncHandler(async (req, res) => {
     throw new AppError("Report was not found", 404);
   }
 
+  // If the report has been reviewed, fetch the associated moderation action
+  // so the moderator can see what decision was made and why.
+  const moderationAction =
+    report.status === "REVIEWED"
+      ? await ModerationAction.findOne({ report: report._id })
+      : null;
+
   return res.status(200).json({
     success: true,
     message: "Report retrieved successfully.",
 
     data: {
       report,
+      moderationAction,
     },
   });
 });
 
-// ─── POST /reports/:reportId/review ──────────────────────────────────────────
+// â”€â”€â”€ POST /reports/:reportId/review â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const reviewReport = asyncHandler(async (req, res) => {
   const { action, reason } = req.body;
