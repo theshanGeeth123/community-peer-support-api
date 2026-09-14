@@ -10,22 +10,18 @@ import groupRoutes from "./routes/group.routes.js";
 import groupMembershipRoutes from "./routes/groupMembership.routes.js";
 import postRoutes from "./routes/post.routes.js";
 import globalPostRoutes from "./routes/globalPost.routes.js";
+import reportRoutes from "./routes/report.routes.js";
 
 import {
   globalErrorHandler,
   notFoundHandler,
 } from "./middleware/error.middleware.js";
 
-const app =
-  express();
+const app = express();
 
-app.disable(
-  "x-powered-by"
-);
+app.disable("x-powered-by");
 
-app.use(
-  helmet()
-);
+app.use(helmet());
 
 app.use(
   cors({
@@ -34,9 +30,7 @@ app.use(
   })
 );
 
-app.use(
-  express.json()
-);
+app.use(express.json());
 
 app.use(
   express.urlencoded({
@@ -45,13 +39,8 @@ app.use(
   })
 );
 
-if (
-  process.env.NODE_ENV ===
-  "development"
-) {
-  app.use(
-    morgan("dev")
-  );
+if (process.env.NODE_ENV === "development") {
+  app.use(morgan("dev"));
 }
 
 /*
@@ -60,40 +49,14 @@ if (
 |--------------------------------------------------------------------------
 */
 
-app.use(
-  "/api/v1/health",
-  healthRoutes
-);
-
-app.use(
-  "/api/v1/auth",
-  authRoutes
-);
-
-app.use(
-  "/api/v1/admin",
-  adminRoutes
-);
-
-app.use(
-  "/api/v1/groups",
-  groupRoutes
-);
-
-app.use(
-  "/api/v1/group-memberships",
-  groupMembershipRoutes
-);
-
-app.use(
-  "/api/v1",
-  postRoutes
-);
-
-app.use(
-  "/api/v1/community",
-  globalPostRoutes
-);
+app.use("/api/v1/health", healthRoutes);
+app.use("/api/v1/auth", authRoutes);
+app.use("/api/v1/admin", adminRoutes);
+app.use("/api/v1/groups", groupRoutes);
+app.use("/api/v1/group-memberships", groupMembershipRoutes);
+app.use("/api/v1", postRoutes);
+app.use("/api/v1/community", globalPostRoutes);
+app.use("/api/v1/reports", reportRoutes);
 
 /*
 |--------------------------------------------------------------------------
@@ -101,12 +64,7 @@ app.use(
 |--------------------------------------------------------------------------
 */
 
-app.use(
-  notFoundHandler
-);
-
-app.use(
-  globalErrorHandler
-);
+app.use(notFoundHandler);
+app.use(globalErrorHandler);
 
 export default app;
