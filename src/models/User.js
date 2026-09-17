@@ -11,23 +11,41 @@ const userSchema = new mongoose.Schema(
   {
     fullName: {
       type: String,
-      required: [true, "Full name is required"],
+      required: [
+        true,
+        "Full name is required",
+      ],
       trim: true,
-      minlength: [2, "Full name must contain at least 2 characters"],
-      maxlength: [80, "Full name cannot exceed 80 characters"],
+      minlength: [
+        2,
+        "Full name must contain at least 2 characters",
+      ],
+      maxlength: [
+        80,
+        "Full name cannot exceed 80 characters",
+      ],
     },
 
     email: {
       type: String,
-      required: [true, "Email address is required"],
+      required: [
+        true,
+        "Email address is required",
+      ],
       trim: true,
       lowercase: true,
-      maxlength: [254, "Email address is too long"],
+      maxlength: [
+        254,
+        "Email address is too long",
+      ],
     },
 
     password: {
       type: String,
-      minlength: [8, "Password must contain at least 8 characters"],
+      minlength: [
+        8,
+        "Password must contain at least 8 characters",
+      ],
       select: false,
     },
 
@@ -41,21 +59,34 @@ const userSchema = new mongoose.Schema(
       type: [
         {
           type: String,
-          enum: Object.values(AUTH_PROVIDERS),
+          enum: Object.values(
+            AUTH_PROVIDERS
+          ),
         },
       ],
-      default: [AUTH_PROVIDERS.LOCAL],
+      default: [
+        AUTH_PROVIDERS.LOCAL,
+      ],
     },
 
     role: {
       type: String,
-      enum: Object.values(USER_ROLES),
+      enum: Object.values(
+        USER_ROLES
+      ),
       default: USER_ROLES.USER,
     },
 
     avatarUrl: {
       type: String,
       trim: true,
+      default: null,
+    },
+
+    avatarPublicId: {
+      type: String,
+      trim: true,
+      select: false,
       default: null,
     },
 
@@ -66,8 +97,11 @@ const userSchema = new mongoose.Schema(
 
     accountStatus: {
       type: String,
-      enum: Object.values(ACCOUNT_STATUS),
-      default: ACCOUNT_STATUS.ACTIVE,
+      enum: Object.values(
+        ACCOUNT_STATUS
+      ),
+      default:
+        ACCOUNT_STATUS.ACTIVE,
     },
 
     emailVerificationOtpHash: {
@@ -88,12 +122,13 @@ const userSchema = new mongoose.Schema(
       default: null,
     },
 
-    emailVerificationOtpAttemptCount: {
-      type: Number,
-      select: false,
-      default: 0,
-      min: 0,
-    },
+    emailVerificationOtpAttemptCount:
+      {
+        type: Number,
+        select: false,
+        default: 0,
+        min: 0,
+      },
 
     passwordResetOtpHash: {
       type: String,
@@ -137,7 +172,9 @@ const userSchema = new mongoose.Schema(
 );
 
 userSchema.index(
-  { email: 1 },
+  {
+    email: 1,
+  },
   {
     unique: true,
     name: "unique_user_email",
@@ -145,7 +182,9 @@ userSchema.index(
 );
 
 userSchema.index(
-  { googleId: 1 },
+  {
+    googleId: 1,
+  },
   {
     unique: true,
     sparse: true,
@@ -153,60 +192,111 @@ userSchema.index(
   }
 );
 
-userSchema.pre("save", async function () {
-  if (!this.isModified("password") || !this.password) {
-    return;
+userSchema.pre(
+  "save",
+  async function () {
+    if (
+      !this.isModified(
+        "password"
+      ) ||
+      !this.password
+    ) {
+      return;
+    }
+
+    this.password =
+      await bcrypt.hash(
+        this.password,
+        12
+      );
+
+    if (!this.isNew) {
+      this.passwordChangedAt =
+        new Date();
+    }
   }
+);
 
-  this.password = await bcrypt.hash(this.password, 12);
+userSchema.methods.comparePassword =
+  async function (
+    candidatePassword
+  ) {
+    if (!this.password) {
+      return false;
+    }
 
-  if (!this.isNew) {
-    this.passwordChangedAt = new Date();
-  }
-});
-
-userSchema.methods.comparePassword = async function (
-  candidatePassword
-) {
-  if (!this.password) {
-    return false;
-  }
-
-  return bcrypt.compare(candidatePassword, this.password);
-};
-
-userSchema.methods.toSafeObject = function () {
-  return {
-    id: this._id.toString(),
-    fullName: this.fullName,
-    email: this.email,
-    role: this.role,
-    avatarUrl: this.avatarUrl,
-    authProviders: this.authProviders,
-
-    canUsePasswordLogin: this.authProviders.includes(
-      AUTH_PROVIDERS.LOCAL
-    ),
-
-    isEmailVerified: this.isEmailVerified,
-    accountStatus: this.accountStatus,
-    createdAt: this.createdAt,
-    updatedAt: this.updatedAt,
+    return bcrypt.compare(
+      candidatePassword,
+      this.password
+    );
   };
-};
 
-userSchema.methods.toAdminObject = function () {
-  return {
-    ...this.toSafeObject(),
+userSchema.methods.toSafeObject =
+  function () {
+    return {
+      id: this._id.toString(),
 
-    hasLocalPassword: Boolean(this.password),
-    isGoogleConnected: Boolean(this.googleId),
+      fullName:
+        this.fullName,
 
-    lastLoginAt: this.lastLoginAt,
-    passwordChangedAt: this.passwordChangedAt,
+      email:
+        this.email,
+
+      role:
+        this.role,
+
+      avatarUrl:
+        this.avatarUrl,
+
+      authProviders:
+        this.authProviders,
+
+      canUsePasswordLogin:
+        this.authProviders.includes(
+          AUTH_PROVIDERS.LOCAL
+        ),
+
+      isEmailVerified:
+        this.isEmailVerified,
+
+      accountStatus:
+        this.accountStatus,
+
+      createdAt:
+        this.createdAt,
+
+      updatedAt:
+        this.updatedAt,
+    };
   };
-};
 
-const User = mongoose.model("User", userSchema);
+userSchema.methods.toAdminObject =
+  function () {
+    return {
+      ...this.toSafeObject(),
+
+      hasLocalPassword:
+        Boolean(
+          this.password
+        ),
+
+      isGoogleConnected:
+        Boolean(
+          this.googleId
+        ),
+
+      lastLoginAt:
+        this.lastLoginAt,
+
+      passwordChangedAt:
+        this.passwordChangedAt,
+    };
+  };
+
+const User =
+  mongoose.model(
+    "User",
+    userSchema
+  );
 
 export default User;
