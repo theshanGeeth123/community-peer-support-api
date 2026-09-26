@@ -6,6 +6,9 @@ import GroupMembership from "../models/GroupMembership.js";
 
 import { USER_ROLES } from "../constants/auth.constants.js";
 import { GROUP_STATUS, GROUP_MEMBERSHIP_STATUS } from "../constants/group.constants.js";
+import { CONTENT_WARNING } from "../constants/post.constants.js";
+
+import { detectCrisisContent } from "../services/contentSafety.service.js";
 
 import AppError from "../utils/AppError.js";
 import asyncHandler from "../utils/asyncHandler.js";
@@ -158,11 +161,52 @@ const redactPostAuthor = (post, viewerUser, group) => {
   return ANONYMOUS_AUTHOR;
 };
 
+const formatCrisisFlag = (crisisFlag) => ({
+  isFlagged: true,
+  matchedTerms: crisisFlag.matchedTerms,
+  flaggedAt: crisisFlag.flaggedAt,
+  isHandled: Boolean(crisisFlag.handledAt),
+  handledBy: crisisFlag.handledBy ? crisisFlag.handledBy.toString() : null,
+  handledAt: crisisFlag.handledAt,
+});
+
+/*
+ * Crisis flags are shown to group staff only. The author and other
+ * members never see that a post was flagged.
+ */
+const buildCrisisFlagForViewer = (post, viewerUser, group) => {
+  if (!post.crisisFlag?.isFlagged || !isGroupStaffOrAdmin(viewerUser, group)) {
+    return null;
+  }
+
+  return formatCrisisFlag(post.crisisFlag);
+};
+
 const buildPostResponse = (post, viewerUser, group, likedPostIdSet) => ({
   ...post.toSafeObject(),
   author: redactPostAuthor(post, viewerUser, group),
   likedByMe: likedPostIdSet.has(post._id.toString()),
+  crisisFlag: buildCrisisFlagForViewer(post, viewerUser, group),
 });
+
+/*
+ * Groups whose crisis alerts the user is allowed to see.
+ * Returns null for admins, meaning "all groups".
+ */
+const getStaffGroupIds = async (user) => {
+  if (user.role === USER_ROLES.ADMIN) {
+    return null;
+  }
+
+  const filter =
+    user.role === USER_ROLES.MODERATOR
+      ? { moderators: user._id }
+      : { peerSupporters: user._id };
+
+  const groups = await SupportGroup.find(filter).select("_id");
+
+  return groups.map((group) => group._id);
+};
 
 /*
 |--------------------------------------------------------------------------
@@ -175,11 +219,35 @@ export const createPost = asyncHandler(async (req, res) => {
 
   await assertCanPostOrThrow(group, req.user);
 
+  const content = req.body.content.trim();
+
+  const crisisCheck = detectCrisisContent(content);
+
+  /*
+   * Crisis posts always get a suicide/self-harm warning, even if the
+   * author did not add one, so other members are not exposed to it
+   * without choosing to read it.
+   */
+  const contentWarnings = new Set(req.body.contentWarnings ?? []);
+
+  if (crisisCheck.isCrisis) {
+    contentWarnings.add(CONTENT_WARNING.SUICIDE_SELF_HARM);
+  }
+
   const post = await Post.create({
     group: group._id,
     author: req.user._id,
-    content: req.body.content.trim(),
+    content,
     isAnonymous: Boolean(req.body.isAnonymous),
+    contentWarnings: [...contentWarnings],
+
+    crisisFlag: crisisCheck.isCrisis
+      ? {
+          isFlagged: true,
+          matchedTerms: crisisCheck.matchedTerms,
+          flaggedAt: new Date(),
+        }
+      : undefined,
   });
 
   const populatedPost = await populatePostAuthor(Post.findById(post._id));
@@ -189,6 +257,146 @@ export const createPost = asyncHandler(async (req, res) => {
     message: "Post created successfully",
     data: {
       post: buildPostResponse(populatedPost, req.user, group, new Set()),
+
+      /*
+       * Tells the app to show the author crisis support resources.
+       * Matched terms are not sent back to the author.
+       */
+      safety: {
+        crisisDetected: crisisCheck.isCrisis,
+      },
+    },
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| CRISIS ALERTS (group staff)
+|--------------------------------------------------------------------------
+|
+| status=open (default) → flagged posts nobody has handled yet
+| status=handled        → flagged posts already handled
+| status=all            → both
+|
+*/
+
+export const getCrisisAlerts = asyncHandler(async (req, res) => {
+  const status = req.query.status || "open";
+  const page = req.query.page || 1;
+  const limit = req.query.limit || 20;
+  const skip = (page - 1) * limit;
+
+  const staffGroupIds = await getStaffGroupIds(req.user);
+
+  const filter = { "crisisFlag.isFlagged": true };
+
+  if (status === "open") {
+    filter["crisisFlag.handledAt"] = null;
+  } else if (status === "handled") {
+    filter["crisisFlag.handledAt"] = { $ne: null };
+  }
+
+  if (req.query.groupId) {
+    const canSeeGroup =
+      staffGroupIds === null ||
+      staffGroupIds.some((id) => id.toString() === req.query.groupId);
+
+    if (!canSeeGroup) {
+      throw new AppError("You are not assigned to this group", 403);
+    }
+
+    filter.group = req.query.groupId;
+  } else if (staffGroupIds !== null) {
+    filter.group = { $in: staffGroupIds };
+  }
+
+  const [posts, totalPosts] = await Promise.all([
+    populatePostAuthor(
+      Post.find(filter)
+        .sort({ "crisisFlag.flaggedAt": -1 })
+        .skip(skip)
+        .limit(limit)
+    ),
+
+    Post.countDocuments(filter),
+  ]);
+
+  const groups = await SupportGroup.find({
+    _id: { $in: [...new Set(posts.map((post) => post.group.toString()))] },
+  });
+
+  const groupMap = new Map(
+    groups.map((group) => [group._id.toString(), group])
+  );
+
+  const likes = await PostLike.find({
+    post: { $in: posts.map((post) => post._id) },
+    user: req.user._id,
+  });
+
+  const likedPostIdSet = new Set(likes.map((like) => like.post.toString()));
+
+  const totalPages = Math.max(1, Math.ceil(totalPosts / limit));
+
+  return res.status(200).json({
+    success: true,
+    message: "Crisis alerts retrieved successfully",
+    data: {
+      posts: posts
+        .filter((post) => groupMap.has(post.group.toString()))
+        .map((post) => {
+          const group = groupMap.get(post.group.toString());
+
+          return {
+            ...buildPostResponse(post, req.user, group, likedPostIdSet),
+            groupName: group.name,
+          };
+        }),
+
+      pagination: {
+        page,
+        limit,
+        totalPosts,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPreviousPage: page > 1,
+      },
+    },
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| MARK CRISIS ALERT AS HANDLED (group staff)
+|--------------------------------------------------------------------------
+*/
+
+export const markCrisisAlertHandled = asyncHandler(async (req, res) => {
+  const { post, group } = await getPostWithGroupOrThrow(req.params.postId);
+
+  if (!isGroupStaffOrAdmin(req.user, group)) {
+    throw new AppError(
+      "You do not have permission to handle this crisis alert",
+      403
+    );
+  }
+
+  if (!post.crisisFlag?.isFlagged) {
+    throw new AppError("This post does not have a crisis alert", 400);
+  }
+
+  if (!post.crisisFlag.handledAt) {
+    post.crisisFlag.handledBy = req.user._id;
+    post.crisisFlag.handledAt = new Date();
+
+    await post.save();
+  }
+
+  return res.status(200).json({
+    success: true,
+    message: "Crisis alert marked as handled",
+    data: {
+      crisisFlag: formatCrisisFlag(post.crisisFlag),
     },
   });
 });

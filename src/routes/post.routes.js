@@ -3,10 +3,12 @@ import express from "express";
 import {
   createPost,
   deletePost,
+  getCrisisAlerts,
   getGroupPosts,
   getMyFeed,
   getPostById,
   getPostComments,
+  markCrisisAlertHandled,
   togglePostLike,
   togglePostPin,
 } from "../controllers/post.controller.js";
@@ -32,6 +34,7 @@ import {
   commentIdParamValidator,
   createCommentValidator,
   createPostValidator,
+  listCrisisAlertsValidator,
   listMyFeedValidator,
   listPostsValidator,
   postIdParamValidator,
@@ -58,6 +61,27 @@ router.get(
   listMyFeedValidator,
   validateRequest,
   getMyFeed
+);
+
+/*
+|--------------------------------------------------------------------------
+| CRISIS ALERTS (group staff)
+|--------------------------------------------------------------------------
+|
+| Same rule as my-feed: keep before "/posts/:postId".
+|
+*/
+
+router.get(
+  "/posts/crisis-alerts",
+  authorizeRoles(
+    USER_ROLES.MODERATOR,
+    USER_ROLES.PEER_SUPPORTER,
+    USER_ROLES.ADMIN
+  ),
+  listCrisisAlertsValidator,
+  validateRequest,
+  getCrisisAlerts
 );
 
 /*
@@ -112,6 +136,13 @@ router.post(
   postIdParamValidator,
   validateRequest,
   togglePostPin
+);
+
+router.patch(
+  "/posts/:postId/crisis-flag/handle",
+  postIdParamValidator,
+  validateRequest,
+  markCrisisAlertHandled
 );
 
 /*

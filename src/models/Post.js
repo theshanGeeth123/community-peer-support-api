@@ -1,5 +1,7 @@
 import mongoose from "mongoose";
 
+import { CONTENT_WARNING } from "../constants/post.constants.js";
+
 const postSchema = new mongoose.Schema(
   {
     group: {
@@ -40,6 +42,20 @@ const postSchema = new mongoose.Schema(
       default: false,
     },
 
+    /*
+     * Trigger warnings chosen by the author. When present, the app
+     * hides the content behind a "Show post" overlay for other members.
+     */
+    contentWarnings: {
+      type: [
+        {
+          type: String,
+          enum: Object.values(CONTENT_WARNING),
+        },
+      ],
+      default: [],
+    },
+
     likeCount: {
       type: Number,
       default: 0,
@@ -51,6 +67,44 @@ const postSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+
+    /*
+    |--------------------------------------------------------------------------
+    | CRISIS FLAG
+    |--------------------------------------------------------------------------
+    |
+    | Set automatically when the post content matches crisis keywords.
+    | Visible to group staff only.
+    |
+    */
+
+    crisisFlag: {
+      isFlagged: {
+        type: Boolean,
+        default: false,
+      },
+
+      matchedTerms: {
+        type: [String],
+        default: [],
+      },
+
+      flaggedAt: {
+        type: Date,
+        default: null,
+      },
+
+      handledBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        default: null,
+      },
+
+      handledAt: {
+        type: Date,
+        default: null,
+      },
+    },
   },
   {
     timestamps: true,
@@ -60,6 +114,17 @@ const postSchema = new mongoose.Schema(
 
 postSchema.index({ group: 1, isPinned: -1, createdAt: -1 });
 
+postSchema.index({
+  "crisisFlag.isFlagged": 1,
+  "crisisFlag.handledAt": 1,
+  group: 1,
+  createdAt: -1,
+});
+
+/*
+ * crisisFlag is intentionally left out — it is added only for
+ * group staff in the post controller.
+ */
 postSchema.methods.toSafeObject = function () {
   return {
     id: this._id.toString(),
@@ -69,6 +134,7 @@ postSchema.methods.toSafeObject = function () {
     imageUrl: this.imageUrl,
     isAnonymous: this.isAnonymous,
     isPinned: this.isPinned,
+    contentWarnings: this.contentWarnings ?? [],
     likeCount: this.likeCount,
     commentCount: this.commentCount,
     createdAt: this.createdAt,
