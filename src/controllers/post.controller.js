@@ -23,6 +23,12 @@ const ANONYMOUS_AUTHOR = Object.freeze({
   isAnonymized: true,
 });
 
+/*
+ * Makes user input safe to use inside a RegExp,
+ * e.g. "why?" or "(help)" are searched literally.
+ */
+const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 const populatePostAuthor = (query) => {
   return query.populate({ path: "author", select: AUTHOR_SELECT_FIELDS });
 };
@@ -486,15 +492,33 @@ export const getGroupPosts = asyncHandler(async (req, res) => {
   const limit = req.query.limit || 20;
   const skip = (page - 1) * limit;
 
+  const searchText = req.query.q?.trim() ?? "";
+  const isSearching = searchText.length > 0;
+
+  const filter = { group: group._id };
+
+  /*
+   * Searches post content only — never author names, so searching
+   * cannot reveal who wrote an anonymous post.
+   */
+  if (isSearching) {
+    filter.content = { $regex: escapeRegex(searchText), $options: "i" };
+  }
+
+  /*
+   * Search results are ordered by date only; pinned posts are
+   * lifted to the top only in the normal feed.
+   */
+  const sort = isSearching
+    ? { createdAt: -1 }
+    : { isPinned: -1, createdAt: -1 };
+
   const [posts, totalPosts] = await Promise.all([
     populatePostAuthor(
-      Post.find({ group: group._id })
-        .sort({ isPinned: -1, createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
+      Post.find(filter).sort(sort).skip(skip).limit(limit)
     ),
 
-    Post.countDocuments({ group: group._id }),
+    Post.countDocuments(filter),
   ]);
 
   const likes = await PostLike.find({

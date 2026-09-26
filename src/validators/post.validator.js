@@ -59,6 +59,15 @@ export const listCrisisAlertsValidator = [
 export const listPostsValidator = [
   param("groupId").isMongoId().withMessage("Invalid group ID"),
 
+  query("q")
+    .optional()
+    .isString()
+    .withMessage("Search text must be text")
+    .bail()
+    .trim()
+    .isLength({ max: 100 })
+    .withMessage("Search text cannot exceed 100 characters"),
+
   query("page")
     .optional()
     .isInt({ min: 1 })
