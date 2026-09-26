@@ -1,109 +1,225 @@
-import { rateLimit } from "express-rate-limit";
+import {
+  rateLimit,
+} from "express-rate-limit";
 
 const isDevelopment =
-  process.env.NODE_ENV === "development";
+  process.env.NODE_ENV ===
+  "development";
 
-const createRateLimitResponse = (message) => ({
-  success: false,
-  message,
-});
+const createRateLimitResponse =
+  (message) => ({
+    success: false,
+    message,
+  });
 
-export const registrationLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: isDevelopment ? 100 : 5,
-  standardHeaders: true,
-  legacyHeaders: false,
+export const registrationLimiter =
+  rateLimit({
+    windowMs:
+      15 * 60 * 1000,
 
-  message: createRateLimitResponse(
-    "Too many registration attempts. Please try again after 15 minutes."
-  ),
-});
+    limit:
+      isDevelopment
+        ? 100
+        : 5,
+
+    standardHeaders:
+      true,
+
+    legacyHeaders:
+      false,
+
+    message:
+      createRateLimitResponse(
+        "Too many registration attempts. Please try again after 15 minutes."
+      ),
+  });
 
 export const emailVerificationLimiter =
   rateLimit({
-    windowMs: 15 * 60 * 1000,
-    limit: isDevelopment ? 100 : 10,
-    standardHeaders: true,
-    legacyHeaders: false,
+    windowMs:
+      15 * 60 * 1000,
 
-    message: createRateLimitResponse(
-      "Too many verification attempts. Please try again after 15 minutes."
-    ),
+    limit:
+      isDevelopment
+        ? 100
+        : 10,
+
+    standardHeaders:
+      true,
+
+    legacyHeaders:
+      false,
+
+    message:
+      createRateLimitResponse(
+        "Too many verification attempts. Please try again after 15 minutes."
+      ),
   });
 
 export const resendVerificationLimiter =
   rateLimit({
-    windowMs: 15 * 60 * 1000,
-    limit: isDevelopment ? 50 : 5,
-    standardHeaders: true,
-    legacyHeaders: false,
+    windowMs:
+      15 * 60 * 1000,
 
-    message: createRateLimitResponse(
-      "Too many verification-code requests. Please try again after 15 minutes."
-    ),
+    limit:
+      isDevelopment
+        ? 50
+        : 5,
+
+    standardHeaders:
+      true,
+
+    legacyHeaders:
+      false,
+
+    message:
+      createRateLimitResponse(
+        "Too many verification-code requests. Please try again after 15 minutes."
+      ),
   });
 
-export const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: isDevelopment ? 100 : 10,
-  standardHeaders: true,
-  legacyHeaders: false,
+export const loginLimiter =
+  rateLimit({
+    windowMs:
+      15 * 60 * 1000,
 
-  message: createRateLimitResponse(
-    "Too many login attempts. Please try again after 15 minutes."
-  ),
-});
+    limit:
+      isDevelopment
+        ? 100
+        : 10,
+
+    standardHeaders:
+      true,
+
+    legacyHeaders:
+      false,
+
+    message:
+      createRateLimitResponse(
+        "Too many login attempts. Please try again after 15 minutes."
+      ),
+  });
 
 export const authenticationSessionLimiter =
   rateLimit({
-    windowMs: 15 * 60 * 1000,
-    limit: isDevelopment ? 100 : 30,
-    standardHeaders: true,
-    legacyHeaders: false,
+    windowMs:
+      15 * 60 * 1000,
 
-    message: createRateLimitResponse(
-      "Too many authentication requests. Please try again later."
-    ),
+    limit:
+      isDevelopment
+        ? 100
+        : 30,
+
+    standardHeaders:
+      true,
+
+    legacyHeaders:
+      false,
+
+    message:
+      createRateLimitResponse(
+        "Too many authentication requests. Please try again later."
+      ),
   });
 
-  export const forgotPasswordLimiter =
+export const forgotPasswordLimiter =
   rateLimit({
-    windowMs: 15 * 60 * 1000,
+    windowMs:
+      15 * 60 * 1000,
 
-    limit: isDevelopment ? 100 : 5,
+    limit:
+      isDevelopment
+        ? 100
+        : 5,
 
-    standardHeaders: true,
-    legacyHeaders: false,
+    standardHeaders:
+      true,
 
-    message: createRateLimitResponse(
-      "Too many password reset requests. Please try again after 15 minutes."
-    ),
+    legacyHeaders:
+      false,
+
+    message:
+      createRateLimitResponse(
+        "Too many password reset requests. Please try again after 15 minutes."
+      ),
   });
 
 export const resetPasswordLimiter =
   rateLimit({
-    windowMs: 15 * 60 * 1000,
+    windowMs:
+      15 * 60 * 1000,
 
-    limit: isDevelopment ? 100 : 10,
+    limit:
+      isDevelopment
+        ? 100
+        : 10,
 
-    standardHeaders: true,
-    legacyHeaders: false,
+    standardHeaders:
+      true,
 
-    message: createRateLimitResponse(
-      "Too many password reset attempts. Please try again after 15 minutes."
-    ),
+    legacyHeaders:
+      false,
+
+    message:
+      createRateLimitResponse(
+        "Too many password reset attempts. Please try again after 15 minutes."
+      ),
   });
 
-  export const googleLoginLimiter =
+export const googleLoginLimiter =
   rateLimit({
-    windowMs: 15 * 60 * 1000,
+    windowMs:
+      15 * 60 * 1000,
 
-    limit: isDevelopment ? 100 : 10,
+    limit:
+      isDevelopment
+        ? 100
+        : 10,
 
-    standardHeaders: true,
-    legacyHeaders: false,
+    standardHeaders:
+      true,
 
-    message: createRateLimitResponse(
-      "Too many Google login attempts. Please try again after 15 minutes."
-    ),
+    legacyHeaders:
+      false,
+
+    message:
+      createRateLimitResponse(
+        "Too many Google login attempts. Please try again after 15 minutes."
+      ),
+  });
+
+/*
+|--------------------------------------------------------------------------
+| PUBLIC CHATBOT RATE LIMIT
+|--------------------------------------------------------------------------
+|
+| The chatbot does not require authentication.
+|
+| In production, the request limit helps protect:
+| - Gemini API quota
+| - server resources
+| - API cost
+| - abuse/spam
+|
+*/
+export const chatbotLimiter =
+  rateLimit({
+    windowMs:
+      15 * 60 * 1000,
+
+    limit:
+      isDevelopment
+        ? 100
+        : 30,
+
+    standardHeaders:
+      true,
+
+    legacyHeaders:
+      false,
+
+    message:
+      createRateLimitResponse(
+        "Too many chatbot messages. Please wait a few minutes and try again."
+      ),
   });
