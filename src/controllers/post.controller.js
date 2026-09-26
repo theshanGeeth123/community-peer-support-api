@@ -21,6 +21,7 @@ const ANONYMOUS_AUTHOR = Object.freeze({
   role: null,
   avatarUrl: null,
   isAnonymized: true,
+  staffBadge: null,
 });
 
 /*
@@ -180,11 +181,27 @@ const formatAuthorSummary = (author) => ({
   isAnonymized: false,
 });
 
+/*
+ * "PEER_SUPPORTER" | "MODERATOR" | "ADMIN" when the author is staff of
+ * THIS group (or an admin), otherwise null. Anonymous posts never get a
+ * badge, so a badge cannot narrow down who wrote them.
+ */
+const getAuthorStaffBadge = (post, group) => {
+  if (post.isAnonymous) {
+    return null;
+  }
+
+  return isGroupStaffOrAdmin(post.author, group) ? post.author.role : null;
+};
+
 const redactPostAuthor = (post, viewerUser, group) => {
   const isAuthor = post.author._id.toString() === viewerUser._id.toString();
 
   if (!post.isAnonymous || isAuthor || isGroupStaffOrAdmin(viewerUser, group)) {
-    return formatAuthorSummary(post.author);
+    return {
+      ...formatAuthorSummary(post.author),
+      staffBadge: getAuthorStaffBadge(post, group),
+    };
   }
 
   return ANONYMOUS_AUTHOR;
