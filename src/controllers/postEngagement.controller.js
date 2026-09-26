@@ -43,7 +43,8 @@ const populateCommentAuthor = (query) => {
 const getActivePostAndGroupOrThrow = async (postId) => {
   const post = await Post.findById(postId);
 
-  if (!post) {
+  // Posts removed by moderation can no longer be commented on.
+  if (!post || post.isRemoved) {
     throw new AppError("Post was not found", 404);
   }
 
@@ -65,7 +66,8 @@ const getActivePostAndGroupOrThrow = async (postId) => {
 const getCommentWithGroupOrThrow = async (commentId) => {
   const comment = await PostComment.findById(commentId);
 
-  if (!comment) {
+  // Comments removed by moderation behave as if they no longer exist.
+  if (!comment || comment.isRemoved) {
     throw new AppError(
       "Comment was not found",
       404
@@ -330,7 +332,15 @@ export const deleteComment =
     const replies =
       await PostComment.find({
         parentComment: comment._id,
-      }).select("_id");
+      }).select("_id isRemoved");
+
+    // Replies hidden by moderation were already taken off
+    // commentCount, so only count the visible ones.
+    const visibleCommentCount =
+      1 +
+      replies.filter(
+        (reply) => !reply.isRemoved
+      ).length;
 
     const commentIds = [
       comment._id,
@@ -358,7 +368,7 @@ export const deleteComment =
       {
         $inc: {
           commentCount:
-            -commentIds.length,
+            -visibleCommentCount,
         },
       }
     );

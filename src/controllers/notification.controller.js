@@ -40,21 +40,24 @@ const formatNotification = (notification) => ({
     : null,
 
   /*
-   * null when the post or comment has since been deleted.
+   * null when the post or comment has since been deleted,
+   * or removed by a moderator.
    */
-  post: notification.post
-    ? {
-        id: notification.post._id.toString(),
-        preview: toPreview(notification.post.content),
-      }
-    : null,
+  post:
+    notification.post && !notification.post.isRemoved
+      ? {
+          id: notification.post._id.toString(),
+          preview: toPreview(notification.post.content),
+        }
+      : null,
 
-  comment: notification.comment
-    ? {
-        id: notification.comment._id.toString(),
-        preview: toPreview(notification.comment.content),
-      }
-    : null,
+  comment:
+    notification.comment && !notification.comment.isRemoved
+      ? {
+          id: notification.comment._id.toString(),
+          preview: toPreview(notification.comment.content),
+        }
+      : null,
 
   createdAt: notification.createdAt,
   updatedAt: notification.updatedAt,
@@ -84,8 +87,8 @@ export const getMyNotifications = asyncHandler(async (req, res) => {
       .limit(limit)
       .populate({ path: "actor", select: "fullName avatarUrl" })
       .populate({ path: "group", select: "name" })
-      .populate({ path: "post", select: "content" })
-      .populate({ path: "comment", select: "content" }),
+      .populate({ path: "post", select: "content isRemoved" })
+      .populate({ path: "comment", select: "content isRemoved" }),
 
     Notification.countDocuments(filter),
 

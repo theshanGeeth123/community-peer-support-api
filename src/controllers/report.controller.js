@@ -3,6 +3,8 @@ import Report from "../models/Report.js";
 
 import { REPORT_STATUS } from "../constants/moderation.constants.js";
 
+import { applyModerationAction } from "../services/moderationRemoval.service.js";
+
 import AppError from "../utils/AppError.js";
 import asyncHandler from "../utils/asyncHandler.js";
 
@@ -144,6 +146,15 @@ export const reviewReport = asyncHandler(async (req, res) => {
   if (report.status === REPORT_STATUS.REVIEWED) {
     throw new AppError("This report has already been reviewed", 409);
   }
+
+  // Carry out the decision first (REMOVE hides the post/comment and deletes
+  // its image). If this fails, the report stays PENDING and can be retried.
+  await applyModerationAction({
+    report,
+    action,
+    moderatorId: req.user._id,
+    reason,
+  });
 
   // Atomically mark the report as reviewed and create a moderation action
   const now = new Date();

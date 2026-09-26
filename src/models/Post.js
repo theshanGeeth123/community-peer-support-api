@@ -32,6 +32,15 @@ const postSchema = new mongoose.Schema(
       default: null,
     },
 
+    /*
+     * Cloudinary public ID, used to delete the image with the post.
+     * Not sent to the app.
+     */
+    imagePublicId: {
+      type: String,
+      default: null,
+    },
+
     isAnonymous: {
       type: Boolean,
       default: false,
@@ -66,6 +75,39 @@ const postSchema = new mongoose.Schema(
       type: Number,
       default: 0,
       min: 0,
+    },
+
+    /*
+    |--------------------------------------------------------------------------
+    | MODERATION REMOVAL
+    |--------------------------------------------------------------------------
+    |
+    | Set when a moderator reviews a report with action REMOVE. The post
+    | is hidden from members but kept so Moderation History can still
+    | show what was removed. Its image is deleted from Cloudinary.
+    |
+    */
+
+    isRemoved: {
+      type: Boolean,
+      default: false,
+    },
+
+    removedAt: {
+      type: Date,
+      default: null,
+    },
+
+    removedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+
+    removalReason: {
+      type: String,
+      trim: true,
+      default: null,
     },
 
     /*
@@ -141,6 +183,7 @@ postSchema.methods.toSafeObject = function () {
     isAnonymous: this.isAnonymous,
     isPinned: this.isPinned,
     contentWarnings: this.contentWarnings ?? [],
+    isRemoved: Boolean(this.isRemoved),
     likeCount: this.likeCount,
     commentCount: this.commentCount,
     createdAt: this.createdAt,

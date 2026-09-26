@@ -30,6 +30,7 @@ import {
 } from "../middleware/auth.middleware.js";
 
 import validateRequest from "../middleware/validate.middleware.js";
+import { uploadPostImageFile } from "../middleware/postImageUpload.middleware.js";
 
 import {
   commentIdParamValidator,
@@ -102,8 +103,12 @@ router.get(
 |--------------------------------------------------------------------------
 */
 
+/*
+ * Accepts JSON, or multipart/form-data with an optional "image" file.
+ */
 router.post(
   "/groups/:groupId/posts",
+  uploadPostImageFile,
   createPostValidator,
   validateRequest,
   createPost

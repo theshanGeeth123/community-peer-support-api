@@ -9,6 +9,11 @@ import { GROUP_STATUS, GROUP_MEMBERSHIP_STATUS } from "../constants/group.consta
 import { CONTENT_WARNING, POST_SORT } from "../constants/post.constants.js";
 
 import { detectCrisisContent } from "../services/contentSafety.service.js";
+import { NOT_REMOVED } from "../services/moderationRemoval.service.js";
+import {
+  deletePostImageFromCloudinary,
+  uploadPostImageToCloudinary,
+} from "../services/postImage.service.js";
 import {
   deleteNotificationsForPost,
   notifyPostLike,
@@ -146,10 +151,17 @@ const assertCanDeleteOrThrow = (authorId, group, user) => {
   throw new AppError("You do not have permission to delete this", 403);
 };
 
-const getPostWithGroupOrThrow = async (postId) => {
+/*
+ * Posts removed by moderation count as "not found", except where the
+ * caller opts in (viewing it for moderation, or deleting it).
+ */
+const getPostWithGroupOrThrow = async (
+  postId,
+  { allowRemoved = false } = {}
+) => {
   const post = await populatePostAuthor(Post.findById(postId));
 
-  if (!post) {
+  if (!post || (post.isRemoved && !allowRemoved)) {
     throw new AppError("Post was not found", 404);
   }
 
@@ -343,21 +355,53 @@ export const createPost = asyncHandler(async (req, res) => {
     contentWarnings.add(CONTENT_WARNING.SUICIDE_SELF_HARM);
   }
 
-  const post = await Post.create({
-    group: group._id,
-    author: req.user._id,
-    content,
-    isAnonymous: Boolean(req.body.isAnonymous),
-    contentWarnings: [...contentWarnings],
+  /*
+   * Optional image (multipart "image" field). Uploaded only after all
+   * checks pass, and removed again if the post cannot be saved.
+   */
+  let uploadedImage = null;
 
-    crisisFlag: crisisCheck.isCrisis
-      ? {
-          isFlagged: true,
-          matchedTerms: crisisCheck.matchedTerms,
-          flaggedAt: new Date(),
-        }
-      : undefined,
-  });
+  if (req.file) {
+    try {
+      uploadedImage = await uploadPostImageToCloudinary(req.file.buffer);
+    } catch (error) {
+      console.error(
+        "[post images] Upload failed:",
+        error?.message ?? error
+      );
+
+      throw new AppError(
+        "The image could not be uploaded. Please try again.",
+        502
+      );
+    }
+  }
+
+  let post;
+
+  try {
+    post = await Post.create({
+      group: group._id,
+      author: req.user._id,
+      content,
+      isAnonymous: Boolean(req.body.isAnonymous),
+      contentWarnings: [...contentWarnings],
+      imageUrl: uploadedImage?.secureUrl ?? null,
+      imagePublicId: uploadedImage?.publicId ?? null,
+
+      crisisFlag: crisisCheck.isCrisis
+        ? {
+            isFlagged: true,
+            matchedTerms: crisisCheck.matchedTerms,
+            flaggedAt: new Date(),
+          }
+        : undefined,
+    });
+  } catch (error) {
+    await deletePostImageFromCloudinary(uploadedImage?.publicId);
+
+    throw error;
+  }
 
   const populatedPost = await populatePostAuthor(Post.findById(post._id));
 
@@ -397,7 +441,7 @@ export const getCrisisAlerts = asyncHandler(async (req, res) => {
 
   const staffGroupIds = await getStaffGroupIds(req.user);
 
-  const filter = { "crisisFlag.isFlagged": true };
+  const filter = { "crisisFlag.isFlagged": true, ...NOT_REMOVED };
 
   if (status === "open") {
     filter["crisisFlag.handledAt"] = null;
@@ -470,6 +514,7 @@ export const getNeedsResponseQueue = asyncHandler(async (req, res) => {
   const groupFilter = buildStaffGroupFilter(staffGroupIds, req.query.groupId);
 
   const baseFilter = {
+    ...NOT_REMOVED,
     author: { $ne: req.user._id },
     ...(groupFilter ? { group: groupFilter } : {}),
   };
@@ -603,7 +648,7 @@ export const getMyFeed = asyncHandler(async (req, res) => {
   const limit = req.query.limit || 20;
   const skip = (page - 1) * limit;
 
-  const filter = { group: { $in: groupIds } };
+  const filter = { group: { $in: groupIds }, ...NOT_REMOVED };
 
   const [posts, totalPosts, groups] = await Promise.all([
     populatePostAuthor(
@@ -673,7 +718,7 @@ export const getGroupPosts = asyncHandler(async (req, res) => {
   const searchText = req.query.q?.trim() ?? "";
   const isSearching = searchText.length > 0;
 
-  const filter = { group: group._id };
+  const filter = { group: group._id, ...NOT_REMOVED };
 
   /*
    * Searches post content only — never author names, so searching
@@ -739,9 +784,21 @@ export const getGroupPosts = asyncHandler(async (req, res) => {
 */
 
 export const getPostById = asyncHandler(async (req, res) => {
-  const { post, group } = await getPostWithGroupOrThrow(req.params.postId);
+  const { post, group } = await getPostWithGroupOrThrow(req.params.postId, {
+    allowRemoved: true,
+  });
 
   await assertCanAccessGroupContentOrThrow(group, req.user);
+
+  /*
+   * Staff can still open a removed post (e.g. from a report or
+   * Moderation History). For everyone else it no longer exists.
+   */
+  const isStaff = isGroupStaffOrAdmin(req.user, group);
+
+  if (post.isRemoved && !isStaff) {
+    throw new AppError("Post was not found", 404);
+  }
 
   const existingLike = await PostLike.findOne({
     post: post._id,
@@ -754,7 +811,16 @@ export const getPostById = asyncHandler(async (req, res) => {
     success: true,
     message: "Post retrieved successfully",
     data: {
-      post: buildPostResponse(post, req.user, group, likedPostIdSet),
+      post: {
+        ...buildPostResponse(post, req.user, group, likedPostIdSet),
+
+        ...(post.isRemoved
+          ? {
+              removedAt: post.removedAt,
+              removalReason: post.removalReason,
+            }
+          : {}),
+      },
     },
   });
 });
@@ -766,7 +832,9 @@ export const getPostById = asyncHandler(async (req, res) => {
 */
 
 export const deletePost = asyncHandler(async (req, res) => {
-  const { post, group } = await getPostWithGroupOrThrow(req.params.postId);
+  const { post, group } = await getPostWithGroupOrThrow(req.params.postId, {
+    allowRemoved: true,
+  });
 
   assertCanDeleteOrThrow(post.author._id, group, req.user);
 
@@ -775,6 +843,7 @@ export const deletePost = asyncHandler(async (req, res) => {
     PostComment.deleteMany({ post: post._id }),
     PostLike.deleteMany({ post: post._id }),
     deleteNotificationsForPost(post._id),
+    deletePostImageFromCloudinary(post.imagePublicId),
   ]);
 
   return res.status(200).json({
@@ -878,7 +947,9 @@ export const getPostComments = asyncHandler(async (req, res) => {
   await assertCanAccessGroupContentOrThrow(group, req.user);
 
   const comments = await populateCommentAuthor(
-    PostComment.find({ post: post._id }).sort({ createdAt: 1 })
+    PostComment.find({ post: post._id, ...NOT_REMOVED }).sort({
+      createdAt: 1,
+    })
   );
 
   return res.status(200).json({

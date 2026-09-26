@@ -40,6 +40,26 @@ const postCommentSchema = new mongoose.Schema(
       index: true,
     },
 
+    /*
+     * Set when a moderator removes the comment through a report.
+     * Hidden from members, kept for Moderation History.
+     */
+    isRemoved: {
+      type: Boolean,
+      default: false,
+    },
+
+    removedAt: {
+      type: Date,
+      default: null,
+    },
+
+    removedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+
     content: {
       type: String,
       required: [true, "Comment content is required"],
