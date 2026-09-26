@@ -12,6 +12,7 @@ import postRoutes from "./routes/post.routes.js";
 import globalPostRoutes from "./routes/globalPost.routes.js";
 import reportRoutes from "./routes/report.routes.js";
 import chatbotRoutes from "./routes/chatbot.routes.js";
+import notificationRoutes from "./routes/notification.routes.js";
 
 import {
   globalErrorHandler,
@@ -126,6 +127,11 @@ app.use(
 app.use(
   "/api/v1/reports",
   reportRoutes
+);
+
+app.use(
+  "/api/v1/notifications",
+  notificationRoutes
 );
 
 /*

@@ -10,6 +10,11 @@ import {
   GROUP_MEMBERSHIP_STATUS,
 } from "../constants/group.constants.js";
 
+import {
+  notifyCommentReply,
+  notifyPostComment,
+} from "../services/notification.service.js";
+
 import AppError from "../utils/AppError.js";
 import asyncHandler from "../utils/asyncHandler.js";
 
@@ -195,6 +200,8 @@ export const createComment =
         },
       }
     );
+
+    void notifyPostComment({ post, comment, actorId: req.user._id });
 
     const populatedComment =
       await populateCommentAuthor(
@@ -453,6 +460,13 @@ export const createReply =
         },
       }
     );
+
+    void notifyCommentReply({
+      post,
+      parentComment,
+      reply,
+      actorId: req.user._id,
+    });
 
     const populatedReply =
       await populateCommentAuthor(

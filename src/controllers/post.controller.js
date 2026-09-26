@@ -9,6 +9,11 @@ import { GROUP_STATUS, GROUP_MEMBERSHIP_STATUS } from "../constants/group.consta
 import { CONTENT_WARNING, POST_SORT } from "../constants/post.constants.js";
 
 import { detectCrisisContent } from "../services/contentSafety.service.js";
+import {
+  deleteNotificationsForPost,
+  notifyPostLike,
+  removePostLikeNotification,
+} from "../services/notification.service.js";
 
 import AppError from "../utils/AppError.js";
 import asyncHandler from "../utils/asyncHandler.js";
@@ -769,6 +774,7 @@ export const deletePost = asyncHandler(async (req, res) => {
     Post.deleteOne({ _id: post._id }),
     PostComment.deleteMany({ post: post._id }),
     PostLike.deleteMany({ post: post._id }),
+    deleteNotificationsForPost(post._id),
   ]);
 
   return res.status(200).json({
@@ -830,11 +836,15 @@ export const togglePostLike = asyncHandler(async (req, res) => {
     await PostLike.deleteOne({ _id: existingLike._id });
     await Post.findByIdAndUpdate(post._id, { $inc: { likeCount: -1 } });
     liked = false;
+
+    void removePostLikeNotification({ post, actorId: req.user._id });
   } else {
     try {
       await PostLike.create({ post: post._id, user: req.user._id });
       await Post.findByIdAndUpdate(post._id, { $inc: { likeCount: 1 } });
       liked = true;
+
+      void notifyPostLike({ post, actorId: req.user._id });
     } catch (error) {
       if (error?.code === 11000) {
         liked = true;
