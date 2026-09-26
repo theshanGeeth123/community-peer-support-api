@@ -56,6 +56,27 @@ export const listCrisisAlertsValidator = [
     .toInt(),
 ];
 
+export const listNeedsResponseValidator = [
+  query("groupId")
+    .optional()
+    .isMongoId()
+    .withMessage("Invalid group ID"),
+
+  query("page")
+    .optional()
+    .isInt({ min: 1 })
+    .withMessage("Page must be a positive integer")
+    .bail()
+    .toInt(),
+
+  query("limit")
+    .optional()
+    .isInt({ min: 1, max: 100 })
+    .withMessage("Limit must be between 1 and 100")
+    .bail()
+    .toInt(),
+];
+
 export const listPostsValidator = [
   param("groupId").isMongoId().withMessage("Invalid group ID"),
 

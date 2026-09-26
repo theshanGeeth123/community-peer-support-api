@@ -238,6 +238,64 @@ const getStaffGroupIds = async (user) => {
 };
 
 /*
+ * Mongo filter for the "group" field of a staff list endpoint.
+ * Returns undefined when an admin asks for all groups.
+ */
+const buildStaffGroupFilter = (staffGroupIds, requestedGroupId) => {
+  if (requestedGroupId) {
+    const canSeeGroup =
+      staffGroupIds === null ||
+      staffGroupIds.some((id) => id.toString() === requestedGroupId);
+
+    if (!canSeeGroup) {
+      throw new AppError("You are not assigned to this group", 403);
+    }
+
+    return requestedGroupId;
+  }
+
+  return staffGroupIds === null ? undefined : { $in: staffGroupIds };
+};
+
+/*
+ * Builds post responses for lists that span several groups,
+ * adding each post's groupName and the viewer's like state.
+ */
+const buildPostsWithGroupNames = async (posts, viewerUser) => {
+  if (posts.length === 0) {
+    return [];
+  }
+
+  const [groups, likes] = await Promise.all([
+    SupportGroup.find({
+      _id: { $in: [...new Set(posts.map((post) => post.group.toString()))] },
+    }),
+
+    PostLike.find({
+      post: { $in: posts.map((post) => post._id) },
+      user: viewerUser._id,
+    }),
+  ]);
+
+  const groupMap = new Map(
+    groups.map((group) => [group._id.toString(), group])
+  );
+
+  const likedPostIdSet = new Set(likes.map((like) => like.post.toString()));
+
+  return posts
+    .filter((post) => groupMap.has(post.group.toString()))
+    .map((post) => {
+      const group = groupMap.get(post.group.toString());
+
+      return {
+        ...buildPostResponse(post, viewerUser, group, likedPostIdSet),
+        groupName: group.name,
+      };
+    });
+};
+
+/*
 |--------------------------------------------------------------------------
 | CREATE POST
 |--------------------------------------------------------------------------
@@ -325,18 +383,10 @@ export const getCrisisAlerts = asyncHandler(async (req, res) => {
     filter["crisisFlag.handledAt"] = { $ne: null };
   }
 
-  if (req.query.groupId) {
-    const canSeeGroup =
-      staffGroupIds === null ||
-      staffGroupIds.some((id) => id.toString() === req.query.groupId);
+  const groupFilter = buildStaffGroupFilter(staffGroupIds, req.query.groupId);
 
-    if (!canSeeGroup) {
-      throw new AppError("You are not assigned to this group", 403);
-    }
-
-    filter.group = req.query.groupId;
-  } else if (staffGroupIds !== null) {
-    filter.group = { $in: staffGroupIds };
+  if (groupFilter) {
+    filter.group = groupFilter;
   }
 
   const [posts, totalPosts] = await Promise.all([
@@ -350,42 +400,125 @@ export const getCrisisAlerts = asyncHandler(async (req, res) => {
     Post.countDocuments(filter),
   ]);
 
-  const groups = await SupportGroup.find({
-    _id: { $in: [...new Set(posts.map((post) => post.group.toString()))] },
-  });
-
-  const groupMap = new Map(
-    groups.map((group) => [group._id.toString(), group])
-  );
-
-  const likes = await PostLike.find({
-    post: { $in: posts.map((post) => post._id) },
-    user: req.user._id,
-  });
-
-  const likedPostIdSet = new Set(likes.map((like) => like.post.toString()));
-
   const totalPages = Math.max(1, Math.ceil(totalPosts / limit));
 
   return res.status(200).json({
     success: true,
     message: "Crisis alerts retrieved successfully",
     data: {
-      posts: posts
-        .filter((post) => groupMap.has(post.group.toString()))
-        .map((post) => {
-          const group = groupMap.get(post.group.toString());
-
-          return {
-            ...buildPostResponse(post, req.user, group, likedPostIdSet),
-            groupName: group.name,
-          };
-        }),
+      posts: await buildPostsWithGroupNames(posts, req.user),
 
       pagination: {
         page,
         limit,
         totalPosts,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPreviousPage: page > 1,
+      },
+    },
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| NEEDS A RESPONSE QUEUE (group staff)
+|--------------------------------------------------------------------------
+|
+| crisisAlerts → open crisis alerts, newest first (always shown in full,
+|                up to CRISIS_QUEUE_LIMIT)
+| unanswered   → posts with no comments from the last
+|                NEEDS_RESPONSE_MAX_AGE_DAYS, oldest first so the person
+|                who has waited longest is helped first. Paginated.
+|
+| Posts written by the viewer are left out, and open crisis posts appear
+| only in crisisAlerts so nothing is listed twice.
+|
+*/
+
+const NEEDS_RESPONSE_MAX_AGE_DAYS = 14;
+const CRISIS_QUEUE_LIMIT = 50;
+
+export const getNeedsResponseQueue = asyncHandler(async (req, res) => {
+  const page = req.query.page || 1;
+  const limit = req.query.limit || 20;
+  const skip = (page - 1) * limit;
+
+  const staffGroupIds = await getStaffGroupIds(req.user);
+  const groupFilter = buildStaffGroupFilter(staffGroupIds, req.query.groupId);
+
+  const baseFilter = {
+    author: { $ne: req.user._id },
+    ...(groupFilter ? { group: groupFilter } : {}),
+  };
+
+  const crisisFilter = {
+    ...baseFilter,
+    "crisisFlag.isFlagged": true,
+    "crisisFlag.handledAt": null,
+  };
+
+  const oldestDate = new Date(
+    Date.now() - NEEDS_RESPONSE_MAX_AGE_DAYS * 24 * 60 * 60 * 1000
+  );
+
+  const unansweredFilter = {
+    ...baseFilter,
+    commentCount: 0,
+    createdAt: { $gte: oldestDate },
+    $nor: [
+      {
+        "crisisFlag.isFlagged": true,
+        "crisisFlag.handledAt": null,
+      },
+    ],
+  };
+
+  const [crisisPosts, totalCrisisAlerts, unansweredPosts, totalUnanswered] =
+    await Promise.all([
+      populatePostAuthor(
+        Post.find(crisisFilter)
+          .sort({ "crisisFlag.flaggedAt": -1 })
+          .limit(CRISIS_QUEUE_LIMIT)
+      ),
+
+      Post.countDocuments(crisisFilter),
+
+      populatePostAuthor(
+        Post.find(unansweredFilter)
+          .sort({ createdAt: 1 })
+          .skip(skip)
+          .limit(limit)
+      ),
+
+      Post.countDocuments(unansweredFilter),
+    ]);
+
+  const [crisisAlerts, unanswered] = await Promise.all([
+    buildPostsWithGroupNames(crisisPosts, req.user),
+    buildPostsWithGroupNames(unansweredPosts, req.user),
+  ]);
+
+  const totalPages = Math.max(1, Math.ceil(totalUnanswered / limit));
+
+  return res.status(200).json({
+    success: true,
+    message: "Needs-response queue retrieved successfully",
+    data: {
+      crisisAlerts,
+      unanswered,
+
+      counts: {
+        crisisAlerts: totalCrisisAlerts,
+        unanswered: totalUnanswered,
+      },
+
+      maxAgeDays: NEEDS_RESPONSE_MAX_AGE_DAYS,
+
+      pagination: {
+        page,
+        limit,
+        totalPosts: totalUnanswered,
         totalPages,
         hasNextPage: page < totalPages,
         hasPreviousPage: page > 1,

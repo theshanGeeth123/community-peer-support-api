@@ -6,6 +6,7 @@ import {
   getCrisisAlerts,
   getGroupPosts,
   getMyFeed,
+  getNeedsResponseQueue,
   getPostById,
   getPostComments,
   markCrisisAlertHandled,
@@ -36,6 +37,7 @@ import {
   createPostValidator,
   listCrisisAlertsValidator,
   listMyFeedValidator,
+  listNeedsResponseValidator,
   listPostsValidator,
   postIdParamValidator,
 } from "../validators/post.validator.js";
@@ -65,23 +67,33 @@ router.get(
 
 /*
 |--------------------------------------------------------------------------
-| CRISIS ALERTS (group staff)
+| STAFF QUEUES (crisis alerts, needs a response)
 |--------------------------------------------------------------------------
 |
 | Same rule as my-feed: keep before "/posts/:postId".
 |
 */
 
+const STAFF_ROLES = [
+  USER_ROLES.MODERATOR,
+  USER_ROLES.PEER_SUPPORTER,
+  USER_ROLES.ADMIN,
+];
+
 router.get(
   "/posts/crisis-alerts",
-  authorizeRoles(
-    USER_ROLES.MODERATOR,
-    USER_ROLES.PEER_SUPPORTER,
-    USER_ROLES.ADMIN
-  ),
+  authorizeRoles(...STAFF_ROLES),
   listCrisisAlertsValidator,
   validateRequest,
   getCrisisAlerts
+);
+
+router.get(
+  "/posts/needs-response",
+  authorizeRoles(...STAFF_ROLES),
+  listNeedsResponseValidator,
+  validateRequest,
+  getNeedsResponseQueue
 );
 
 /*
