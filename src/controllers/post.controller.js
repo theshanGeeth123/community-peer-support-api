@@ -6,7 +6,7 @@ import GroupMembership from "../models/GroupMembership.js";
 
 import { USER_ROLES } from "../constants/auth.constants.js";
 import { GROUP_STATUS, GROUP_MEMBERSHIP_STATUS } from "../constants/group.constants.js";
-import { CONTENT_WARNING } from "../constants/post.constants.js";
+import { CONTENT_WARNING, POST_SORT } from "../constants/post.constants.js";
 
 import { detectCrisisContent } from "../services/contentSafety.service.js";
 
@@ -28,6 +28,29 @@ const ANONYMOUS_AUTHOR = Object.freeze({
  * e.g. "why?" or "(help)" are searched literally.
  */
 const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/*
+ * Pinned posts are lifted to the top only in the default feed
+ * (newest, not searching). Other sorts and search results are
+ * ordered purely by what the user asked for.
+ */
+const buildPostSort = (sortOption, isSearching) => {
+  switch (sortOption) {
+    case POST_SORT.MOST_SUPPORTED:
+      return { likeCount: -1, commentCount: -1, createdAt: -1 };
+
+    case POST_SORT.MOST_DISCUSSED:
+      return { commentCount: -1, likeCount: -1, createdAt: -1 };
+
+    case POST_SORT.UNANSWERED:
+      return { createdAt: -1 };
+
+    default:
+      return isSearching
+        ? { createdAt: -1 }
+        : { isPinned: -1, createdAt: -1 };
+  }
+};
 
 const populatePostAuthor = (query) => {
   return query.populate({ path: "author", select: AUTHOR_SELECT_FIELDS });
@@ -505,13 +528,17 @@ export const getGroupPosts = asyncHandler(async (req, res) => {
     filter.content = { $regex: escapeRegex(searchText), $options: "i" };
   }
 
+  const sortOption = req.query.sort || POST_SORT.NEWEST;
+
   /*
-   * Search results are ordered by date only; pinned posts are
-   * lifted to the top only in the normal feed.
+   * Unanswered = no comments yet, so members and peer supporters
+   * can find posts that nobody has replied to.
    */
-  const sort = isSearching
-    ? { createdAt: -1 }
-    : { isPinned: -1, createdAt: -1 };
+  if (sortOption === POST_SORT.UNANSWERED) {
+    filter.commentCount = 0;
+  }
+
+  const sort = buildPostSort(sortOption, isSearching);
 
   const [posts, totalPosts] = await Promise.all([
     populatePostAuthor(

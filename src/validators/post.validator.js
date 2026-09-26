@@ -1,6 +1,6 @@
 import { body, param, query } from "express-validator";
 
-import { CONTENT_WARNING } from "../constants/post.constants.js";
+import { CONTENT_WARNING, POST_SORT } from "../constants/post.constants.js";
 
 export const groupIdParamValidator = [
   param("groupId").isMongoId().withMessage("Invalid group ID"),
@@ -67,6 +67,13 @@ export const listPostsValidator = [
     .trim()
     .isLength({ max: 100 })
     .withMessage("Search text cannot exceed 100 characters"),
+
+  query("sort")
+    .optional()
+    .isIn(Object.values(POST_SORT))
+    .withMessage(
+      `Sort must be one of: ${Object.values(POST_SORT).join(", ")}`
+    ),
 
   query("page")
     .optional()

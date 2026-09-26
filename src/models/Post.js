@@ -114,6 +114,12 @@ const postSchema = new mongoose.Schema(
 
 postSchema.index({ group: 1, isPinned: -1, createdAt: -1 });
 
+/*
+ * Sort options: most supported / most discussed / unanswered
+ */
+postSchema.index({ group: 1, likeCount: -1, commentCount: -1, createdAt: -1 });
+postSchema.index({ group: 1, commentCount: -1, likeCount: -1, createdAt: -1 });
+
 postSchema.index({
   "crisisFlag.isFlagged": 1,
   "crisisFlag.handledAt": 1,
