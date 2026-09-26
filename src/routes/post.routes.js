@@ -3,10 +3,13 @@ import express from "express";
 import {
   createPost,
   deletePost,
+  getCrisisAlerts,
   getGroupPosts,
   getMyFeed,
+  getNeedsResponseQueue,
   getPostById,
   getPostComments,
+  markCrisisAlertHandled,
   togglePostLike,
   togglePostPin,
 } from "../controllers/post.controller.js";
@@ -27,12 +30,15 @@ import {
 } from "../middleware/auth.middleware.js";
 
 import validateRequest from "../middleware/validate.middleware.js";
+import { uploadPostImageFile } from "../middleware/postImageUpload.middleware.js";
 
 import {
   commentIdParamValidator,
   createCommentValidator,
   createPostValidator,
+  listCrisisAlertsValidator,
   listMyFeedValidator,
+  listNeedsResponseValidator,
   listPostsValidator,
   postIdParamValidator,
 } from "../validators/post.validator.js";
@@ -62,12 +68,47 @@ router.get(
 
 /*
 |--------------------------------------------------------------------------
+| STAFF QUEUES (crisis alerts, needs a response)
+|--------------------------------------------------------------------------
+|
+| Same rule as my-feed: keep before "/posts/:postId".
+|
+*/
+
+const STAFF_ROLES = [
+  USER_ROLES.MODERATOR,
+  USER_ROLES.PEER_SUPPORTER,
+  USER_ROLES.ADMIN,
+];
+
+router.get(
+  "/posts/crisis-alerts",
+  authorizeRoles(...STAFF_ROLES),
+  listCrisisAlertsValidator,
+  validateRequest,
+  getCrisisAlerts
+);
+
+router.get(
+  "/posts/needs-response",
+  authorizeRoles(...STAFF_ROLES),
+  listNeedsResponseValidator,
+  validateRequest,
+  getNeedsResponseQueue
+);
+
+/*
+|--------------------------------------------------------------------------
 | GROUP POSTS
 |--------------------------------------------------------------------------
 */
 
+/*
+ * Accepts JSON, or multipart/form-data with an optional "image" file.
+ */
 router.post(
   "/groups/:groupId/posts",
+  uploadPostImageFile,
   createPostValidator,
   validateRequest,
   createPost
@@ -112,6 +153,13 @@ router.post(
   postIdParamValidator,
   validateRequest,
   togglePostPin
+);
+
+router.patch(
+  "/posts/:postId/crisis-flag/handle",
+  postIdParamValidator,
+  validateRequest,
+  markCrisisAlertHandled
 );
 
 /*

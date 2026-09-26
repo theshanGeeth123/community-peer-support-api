@@ -6,6 +6,19 @@ import GroupMembership from "../models/GroupMembership.js";
 
 import { USER_ROLES } from "../constants/auth.constants.js";
 import { GROUP_STATUS, GROUP_MEMBERSHIP_STATUS } from "../constants/group.constants.js";
+import { CONTENT_WARNING, POST_SORT } from "../constants/post.constants.js";
+
+import { detectCrisisContent } from "../services/contentSafety.service.js";
+import { NOT_REMOVED } from "../services/moderationRemoval.service.js";
+import {
+  deletePostImageFromCloudinary,
+  uploadPostImageToCloudinary,
+} from "../services/postImage.service.js";
+import {
+  deleteNotificationsForPost,
+  notifyPostLike,
+  removePostLikeNotification,
+} from "../services/notification.service.js";
 
 import AppError from "../utils/AppError.js";
 import asyncHandler from "../utils/asyncHandler.js";
@@ -18,7 +31,37 @@ const ANONYMOUS_AUTHOR = Object.freeze({
   role: null,
   avatarUrl: null,
   isAnonymized: true,
+  staffBadge: null,
 });
+
+/*
+ * Makes user input safe to use inside a RegExp,
+ * e.g. "why?" or "(help)" are searched literally.
+ */
+const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/*
+ * Pinned posts are lifted to the top only in the default feed
+ * (newest, not searching). Other sorts and search results are
+ * ordered purely by what the user asked for.
+ */
+const buildPostSort = (sortOption, isSearching) => {
+  switch (sortOption) {
+    case POST_SORT.MOST_SUPPORTED:
+      return { likeCount: -1, commentCount: -1, createdAt: -1 };
+
+    case POST_SORT.MOST_DISCUSSED:
+      return { commentCount: -1, likeCount: -1, createdAt: -1 };
+
+    case POST_SORT.UNANSWERED:
+      return { createdAt: -1 };
+
+    default:
+      return isSearching
+        ? { createdAt: -1 }
+        : { isPinned: -1, createdAt: -1 };
+  }
+};
 
 const populatePostAuthor = (query) => {
   return query.populate({ path: "author", select: AUTHOR_SELECT_FIELDS });
@@ -108,10 +151,17 @@ const assertCanDeleteOrThrow = (authorId, group, user) => {
   throw new AppError("You do not have permission to delete this", 403);
 };
 
-const getPostWithGroupOrThrow = async (postId) => {
+/*
+ * Posts removed by moderation count as "not found", except where the
+ * caller opts in (viewing it for moderation, or deleting it).
+ */
+const getPostWithGroupOrThrow = async (
+  postId,
+  { allowRemoved = false } = {}
+) => {
   const post = await populatePostAuthor(Post.findById(postId));
 
-  if (!post) {
+  if (!post || (post.isRemoved && !allowRemoved)) {
     throw new AppError("Post was not found", 404);
   }
 
@@ -148,21 +198,136 @@ const formatAuthorSummary = (author) => ({
   isAnonymized: false,
 });
 
+/*
+ * "PEER_SUPPORTER" | "MODERATOR" | "ADMIN" when the author is staff of
+ * THIS group (or an admin), otherwise null. Anonymous posts never get a
+ * badge, so a badge cannot narrow down who wrote them.
+ */
+const getAuthorStaffBadge = (post, group) => {
+  if (post.isAnonymous) {
+    return null;
+  }
+
+  return isGroupStaffOrAdmin(post.author, group) ? post.author.role : null;
+};
+
 const redactPostAuthor = (post, viewerUser, group) => {
   const isAuthor = post.author._id.toString() === viewerUser._id.toString();
 
   if (!post.isAnonymous || isAuthor || isGroupStaffOrAdmin(viewerUser, group)) {
-    return formatAuthorSummary(post.author);
+    return {
+      ...formatAuthorSummary(post.author),
+      staffBadge: getAuthorStaffBadge(post, group),
+    };
   }
 
   return ANONYMOUS_AUTHOR;
+};
+
+const formatCrisisFlag = (crisisFlag) => ({
+  isFlagged: true,
+  matchedTerms: crisisFlag.matchedTerms,
+  flaggedAt: crisisFlag.flaggedAt,
+  isHandled: Boolean(crisisFlag.handledAt),
+  handledBy: crisisFlag.handledBy ? crisisFlag.handledBy.toString() : null,
+  handledAt: crisisFlag.handledAt,
+});
+
+/*
+ * Crisis flags are shown to group staff only. The author and other
+ * members never see that a post was flagged.
+ */
+const buildCrisisFlagForViewer = (post, viewerUser, group) => {
+  if (!post.crisisFlag?.isFlagged || !isGroupStaffOrAdmin(viewerUser, group)) {
+    return null;
+  }
+
+  return formatCrisisFlag(post.crisisFlag);
 };
 
 const buildPostResponse = (post, viewerUser, group, likedPostIdSet) => ({
   ...post.toSafeObject(),
   author: redactPostAuthor(post, viewerUser, group),
   likedByMe: likedPostIdSet.has(post._id.toString()),
+  crisisFlag: buildCrisisFlagForViewer(post, viewerUser, group),
 });
+
+/*
+ * Groups whose crisis alerts the user is allowed to see.
+ * Returns null for admins, meaning "all groups".
+ */
+const getStaffGroupIds = async (user) => {
+  if (user.role === USER_ROLES.ADMIN) {
+    return null;
+  }
+
+  const filter =
+    user.role === USER_ROLES.MODERATOR
+      ? { moderators: user._id }
+      : { peerSupporters: user._id };
+
+  const groups = await SupportGroup.find(filter).select("_id");
+
+  return groups.map((group) => group._id);
+};
+
+/*
+ * Mongo filter for the "group" field of a staff list endpoint.
+ * Returns undefined when an admin asks for all groups.
+ */
+const buildStaffGroupFilter = (staffGroupIds, requestedGroupId) => {
+  if (requestedGroupId) {
+    const canSeeGroup =
+      staffGroupIds === null ||
+      staffGroupIds.some((id) => id.toString() === requestedGroupId);
+
+    if (!canSeeGroup) {
+      throw new AppError("You are not assigned to this group", 403);
+    }
+
+    return requestedGroupId;
+  }
+
+  return staffGroupIds === null ? undefined : { $in: staffGroupIds };
+};
+
+/*
+ * Builds post responses for lists that span several groups,
+ * adding each post's groupName and the viewer's like state.
+ */
+const buildPostsWithGroupNames = async (posts, viewerUser) => {
+  if (posts.length === 0) {
+    return [];
+  }
+
+  const [groups, likes] = await Promise.all([
+    SupportGroup.find({
+      _id: { $in: [...new Set(posts.map((post) => post.group.toString()))] },
+    }),
+
+    PostLike.find({
+      post: { $in: posts.map((post) => post._id) },
+      user: viewerUser._id,
+    }),
+  ]);
+
+  const groupMap = new Map(
+    groups.map((group) => [group._id.toString(), group])
+  );
+
+  const likedPostIdSet = new Set(likes.map((like) => like.post.toString()));
+
+  return posts
+    .filter((post) => groupMap.has(post.group.toString()))
+    .map((post) => {
+      const group = groupMap.get(post.group.toString());
+
+      return {
+        ...buildPostResponse(post, viewerUser, group, likedPostIdSet),
+        groupName: group.name,
+      };
+    });
+};
 
 /*
 |--------------------------------------------------------------------------
@@ -175,12 +340,68 @@ export const createPost = asyncHandler(async (req, res) => {
 
   await assertCanPostOrThrow(group, req.user);
 
-  const post = await Post.create({
-    group: group._id,
-    author: req.user._id,
-    content: req.body.content.trim(),
-    isAnonymous: Boolean(req.body.isAnonymous),
-  });
+  const content = req.body.content.trim();
+
+  const crisisCheck = detectCrisisContent(content);
+
+  /*
+   * Crisis posts always get a suicide/self-harm warning, even if the
+   * author did not add one, so other members are not exposed to it
+   * without choosing to read it.
+   */
+  const contentWarnings = new Set(req.body.contentWarnings ?? []);
+
+  if (crisisCheck.isCrisis) {
+    contentWarnings.add(CONTENT_WARNING.SUICIDE_SELF_HARM);
+  }
+
+  /*
+   * Optional image (multipart "image" field). Uploaded only after all
+   * checks pass, and removed again if the post cannot be saved.
+   */
+  let uploadedImage = null;
+
+  if (req.file) {
+    try {
+      uploadedImage = await uploadPostImageToCloudinary(req.file.buffer);
+    } catch (error) {
+      console.error(
+        "[post images] Upload failed:",
+        error?.message ?? error
+      );
+
+      throw new AppError(
+        "The image could not be uploaded. Please try again.",
+        502
+      );
+    }
+  }
+
+  let post;
+
+  try {
+    post = await Post.create({
+      group: group._id,
+      author: req.user._id,
+      content,
+      isAnonymous: Boolean(req.body.isAnonymous),
+      contentWarnings: [...contentWarnings],
+      imageUrl: uploadedImage?.secureUrl ?? null,
+      imagePublicId: uploadedImage?.publicId ?? null,
+
+      crisisFlag: crisisCheck.isCrisis
+        ? {
+            isFlagged: true,
+            matchedTerms: crisisCheck.matchedTerms,
+            flaggedAt: new Date(),
+          }
+        : undefined,
+    });
+  } catch (error) {
+    await deletePostImageFromCloudinary(uploadedImage?.publicId);
+
+    throw error;
+  }
 
   const populatedPost = await populatePostAuthor(Post.findById(post._id));
 
@@ -189,6 +410,222 @@ export const createPost = asyncHandler(async (req, res) => {
     message: "Post created successfully",
     data: {
       post: buildPostResponse(populatedPost, req.user, group, new Set()),
+
+      /*
+       * Tells the app to show the author crisis support resources.
+       * Matched terms are not sent back to the author.
+       */
+      safety: {
+        crisisDetected: crisisCheck.isCrisis,
+      },
+    },
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| CRISIS ALERTS (group staff)
+|--------------------------------------------------------------------------
+|
+| status=open (default) → flagged posts nobody has handled yet
+| status=handled        → flagged posts already handled
+| status=all            → both
+|
+*/
+
+export const getCrisisAlerts = asyncHandler(async (req, res) => {
+  const status = req.query.status || "open";
+  const page = req.query.page || 1;
+  const limit = req.query.limit || 20;
+  const skip = (page - 1) * limit;
+
+  const staffGroupIds = await getStaffGroupIds(req.user);
+
+  const filter = { "crisisFlag.isFlagged": true, ...NOT_REMOVED };
+
+  if (status === "open") {
+    filter["crisisFlag.handledAt"] = null;
+  } else if (status === "handled") {
+    filter["crisisFlag.handledAt"] = { $ne: null };
+  }
+
+  const groupFilter = buildStaffGroupFilter(staffGroupIds, req.query.groupId);
+
+  if (groupFilter) {
+    filter.group = groupFilter;
+  }
+
+  const [posts, totalPosts] = await Promise.all([
+    populatePostAuthor(
+      Post.find(filter)
+        .sort({ "crisisFlag.flaggedAt": -1 })
+        .skip(skip)
+        .limit(limit)
+    ),
+
+    Post.countDocuments(filter),
+  ]);
+
+  const totalPages = Math.max(1, Math.ceil(totalPosts / limit));
+
+  return res.status(200).json({
+    success: true,
+    message: "Crisis alerts retrieved successfully",
+    data: {
+      posts: await buildPostsWithGroupNames(posts, req.user),
+
+      pagination: {
+        page,
+        limit,
+        totalPosts,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPreviousPage: page > 1,
+      },
+    },
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| NEEDS A RESPONSE QUEUE (group staff)
+|--------------------------------------------------------------------------
+|
+| crisisAlerts → open crisis alerts, newest first (always shown in full,
+|                up to CRISIS_QUEUE_LIMIT)
+| unanswered   → posts with no comments from the last
+|                NEEDS_RESPONSE_MAX_AGE_DAYS, oldest first so the person
+|                who has waited longest is helped first. Paginated.
+|
+| Posts written by the viewer are left out, and open crisis posts appear
+| only in crisisAlerts so nothing is listed twice.
+|
+*/
+
+const NEEDS_RESPONSE_MAX_AGE_DAYS = 14;
+const CRISIS_QUEUE_LIMIT = 50;
+
+export const getNeedsResponseQueue = asyncHandler(async (req, res) => {
+  const page = req.query.page || 1;
+  const limit = req.query.limit || 20;
+  const skip = (page - 1) * limit;
+
+  const staffGroupIds = await getStaffGroupIds(req.user);
+  const groupFilter = buildStaffGroupFilter(staffGroupIds, req.query.groupId);
+
+  const baseFilter = {
+    ...NOT_REMOVED,
+    author: { $ne: req.user._id },
+    ...(groupFilter ? { group: groupFilter } : {}),
+  };
+
+  const crisisFilter = {
+    ...baseFilter,
+    "crisisFlag.isFlagged": true,
+    "crisisFlag.handledAt": null,
+  };
+
+  const oldestDate = new Date(
+    Date.now() - NEEDS_RESPONSE_MAX_AGE_DAYS * 24 * 60 * 60 * 1000
+  );
+
+  const unansweredFilter = {
+    ...baseFilter,
+    commentCount: 0,
+    createdAt: { $gte: oldestDate },
+    $nor: [
+      {
+        "crisisFlag.isFlagged": true,
+        "crisisFlag.handledAt": null,
+      },
+    ],
+  };
+
+  const [crisisPosts, totalCrisisAlerts, unansweredPosts, totalUnanswered] =
+    await Promise.all([
+      populatePostAuthor(
+        Post.find(crisisFilter)
+          .sort({ "crisisFlag.flaggedAt": -1 })
+          .limit(CRISIS_QUEUE_LIMIT)
+      ),
+
+      Post.countDocuments(crisisFilter),
+
+      populatePostAuthor(
+        Post.find(unansweredFilter)
+          .sort({ createdAt: 1 })
+          .skip(skip)
+          .limit(limit)
+      ),
+
+      Post.countDocuments(unansweredFilter),
+    ]);
+
+  const [crisisAlerts, unanswered] = await Promise.all([
+    buildPostsWithGroupNames(crisisPosts, req.user),
+    buildPostsWithGroupNames(unansweredPosts, req.user),
+  ]);
+
+  const totalPages = Math.max(1, Math.ceil(totalUnanswered / limit));
+
+  return res.status(200).json({
+    success: true,
+    message: "Needs-response queue retrieved successfully",
+    data: {
+      crisisAlerts,
+      unanswered,
+
+      counts: {
+        crisisAlerts: totalCrisisAlerts,
+        unanswered: totalUnanswered,
+      },
+
+      maxAgeDays: NEEDS_RESPONSE_MAX_AGE_DAYS,
+
+      pagination: {
+        page,
+        limit,
+        totalPosts: totalUnanswered,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPreviousPage: page > 1,
+      },
+    },
+  });
+});
+
+/*
+|--------------------------------------------------------------------------
+| MARK CRISIS ALERT AS HANDLED (group staff)
+|--------------------------------------------------------------------------
+*/
+
+export const markCrisisAlertHandled = asyncHandler(async (req, res) => {
+  const { post, group } = await getPostWithGroupOrThrow(req.params.postId);
+
+  if (!isGroupStaffOrAdmin(req.user, group)) {
+    throw new AppError(
+      "You do not have permission to handle this crisis alert",
+      403
+    );
+  }
+
+  if (!post.crisisFlag?.isFlagged) {
+    throw new AppError("This post does not have a crisis alert", 400);
+  }
+
+  if (!post.crisisFlag.handledAt) {
+    post.crisisFlag.handledBy = req.user._id;
+    post.crisisFlag.handledAt = new Date();
+
+    await post.save();
+  }
+
+  return res.status(200).json({
+    success: true,
+    message: "Crisis alert marked as handled",
+    data: {
+      crisisFlag: formatCrisisFlag(post.crisisFlag),
     },
   });
 });
@@ -211,7 +648,7 @@ export const getMyFeed = asyncHandler(async (req, res) => {
   const limit = req.query.limit || 20;
   const skip = (page - 1) * limit;
 
-  const filter = { group: { $in: groupIds } };
+  const filter = { group: { $in: groupIds }, ...NOT_REMOVED };
 
   const [posts, totalPosts, groups] = await Promise.all([
     populatePostAuthor(
@@ -278,15 +715,37 @@ export const getGroupPosts = asyncHandler(async (req, res) => {
   const limit = req.query.limit || 20;
   const skip = (page - 1) * limit;
 
+  const searchText = req.query.q?.trim() ?? "";
+  const isSearching = searchText.length > 0;
+
+  const filter = { group: group._id, ...NOT_REMOVED };
+
+  /*
+   * Searches post content only — never author names, so searching
+   * cannot reveal who wrote an anonymous post.
+   */
+  if (isSearching) {
+    filter.content = { $regex: escapeRegex(searchText), $options: "i" };
+  }
+
+  const sortOption = req.query.sort || POST_SORT.NEWEST;
+
+  /*
+   * Unanswered = no comments yet, so members and peer supporters
+   * can find posts that nobody has replied to.
+   */
+  if (sortOption === POST_SORT.UNANSWERED) {
+    filter.commentCount = 0;
+  }
+
+  const sort = buildPostSort(sortOption, isSearching);
+
   const [posts, totalPosts] = await Promise.all([
     populatePostAuthor(
-      Post.find({ group: group._id })
-        .sort({ isPinned: -1, createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
+      Post.find(filter).sort(sort).skip(skip).limit(limit)
     ),
 
-    Post.countDocuments({ group: group._id }),
+    Post.countDocuments(filter),
   ]);
 
   const likes = await PostLike.find({
@@ -325,9 +784,21 @@ export const getGroupPosts = asyncHandler(async (req, res) => {
 */
 
 export const getPostById = asyncHandler(async (req, res) => {
-  const { post, group } = await getPostWithGroupOrThrow(req.params.postId);
+  const { post, group } = await getPostWithGroupOrThrow(req.params.postId, {
+    allowRemoved: true,
+  });
 
   await assertCanAccessGroupContentOrThrow(group, req.user);
+
+  /*
+   * Staff can still open a removed post (e.g. from a report or
+   * Moderation History). For everyone else it no longer exists.
+   */
+  const isStaff = isGroupStaffOrAdmin(req.user, group);
+
+  if (post.isRemoved && !isStaff) {
+    throw new AppError("Post was not found", 404);
+  }
 
   const existingLike = await PostLike.findOne({
     post: post._id,
@@ -340,7 +811,16 @@ export const getPostById = asyncHandler(async (req, res) => {
     success: true,
     message: "Post retrieved successfully",
     data: {
-      post: buildPostResponse(post, req.user, group, likedPostIdSet),
+      post: {
+        ...buildPostResponse(post, req.user, group, likedPostIdSet),
+
+        ...(post.isRemoved
+          ? {
+              removedAt: post.removedAt,
+              removalReason: post.removalReason,
+            }
+          : {}),
+      },
     },
   });
 });
@@ -352,7 +832,9 @@ export const getPostById = asyncHandler(async (req, res) => {
 */
 
 export const deletePost = asyncHandler(async (req, res) => {
-  const { post, group } = await getPostWithGroupOrThrow(req.params.postId);
+  const { post, group } = await getPostWithGroupOrThrow(req.params.postId, {
+    allowRemoved: true,
+  });
 
   assertCanDeleteOrThrow(post.author._id, group, req.user);
 
@@ -360,6 +842,8 @@ export const deletePost = asyncHandler(async (req, res) => {
     Post.deleteOne({ _id: post._id }),
     PostComment.deleteMany({ post: post._id }),
     PostLike.deleteMany({ post: post._id }),
+    deleteNotificationsForPost(post._id),
+    deletePostImageFromCloudinary(post.imagePublicId),
   ]);
 
   return res.status(200).json({
@@ -421,11 +905,15 @@ export const togglePostLike = asyncHandler(async (req, res) => {
     await PostLike.deleteOne({ _id: existingLike._id });
     await Post.findByIdAndUpdate(post._id, { $inc: { likeCount: -1 } });
     liked = false;
+
+    void removePostLikeNotification({ post, actorId: req.user._id });
   } else {
     try {
       await PostLike.create({ post: post._id, user: req.user._id });
       await Post.findByIdAndUpdate(post._id, { $inc: { likeCount: 1 } });
       liked = true;
+
+      void notifyPostLike({ post, actorId: req.user._id });
     } catch (error) {
       if (error?.code === 11000) {
         liked = true;
@@ -459,7 +947,9 @@ export const getPostComments = asyncHandler(async (req, res) => {
   await assertCanAccessGroupContentOrThrow(group, req.user);
 
   const comments = await populateCommentAuthor(
-    PostComment.find({ post: post._id }).sort({ createdAt: 1 })
+    PostComment.find({ post: post._id, ...NOT_REMOVED }).sort({
+      createdAt: 1,
+    })
   );
 
   return res.status(200).json({

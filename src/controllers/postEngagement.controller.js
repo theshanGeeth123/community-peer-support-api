@@ -10,6 +10,11 @@ import {
   GROUP_MEMBERSHIP_STATUS,
 } from "../constants/group.constants.js";
 
+import {
+  notifyCommentReply,
+  notifyPostComment,
+} from "../services/notification.service.js";
+
 import AppError from "../utils/AppError.js";
 import asyncHandler from "../utils/asyncHandler.js";
 
@@ -38,7 +43,8 @@ const populateCommentAuthor = (query) => {
 const getActivePostAndGroupOrThrow = async (postId) => {
   const post = await Post.findById(postId);
 
-  if (!post) {
+  // Posts removed by moderation can no longer be commented on.
+  if (!post || post.isRemoved) {
     throw new AppError("Post was not found", 404);
   }
 
@@ -60,7 +66,8 @@ const getActivePostAndGroupOrThrow = async (postId) => {
 const getCommentWithGroupOrThrow = async (commentId) => {
   const comment = await PostComment.findById(commentId);
 
-  if (!comment) {
+  // Comments removed by moderation behave as if they no longer exist.
+  if (!comment || comment.isRemoved) {
     throw new AppError(
       "Comment was not found",
       404
@@ -196,6 +203,8 @@ export const createComment =
       }
     );
 
+    void notifyPostComment({ post, comment, actorId: req.user._id });
+
     const populatedComment =
       await populateCommentAuthor(
         PostComment.findById(
@@ -323,7 +332,15 @@ export const deleteComment =
     const replies =
       await PostComment.find({
         parentComment: comment._id,
-      }).select("_id");
+      }).select("_id isRemoved");
+
+    // Replies hidden by moderation were already taken off
+    // commentCount, so only count the visible ones.
+    const visibleCommentCount =
+      1 +
+      replies.filter(
+        (reply) => !reply.isRemoved
+      ).length;
 
     const commentIds = [
       comment._id,
@@ -351,7 +368,7 @@ export const deleteComment =
       {
         $inc: {
           commentCount:
-            -commentIds.length,
+            -visibleCommentCount,
         },
       }
     );
@@ -453,6 +470,13 @@ export const createReply =
         },
       }
     );
+
+    void notifyCommentReply({
+      post,
+      parentComment,
+      reply,
+      actorId: req.user._id,
+    });
 
     const populatedReply =
       await populateCommentAuthor(
