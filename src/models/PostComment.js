@@ -41,9 +41,43 @@ const postCommentSchema = new mongoose.Schema(
     },
 
     /*
+    |--------------------------------------------------------------------------
+    | COMMENT MEDIA
+    |--------------------------------------------------------------------------
+    |
+    | Stores media uploaded to Cloudinary.
+    | The actual photo/video is NOT stored in MongoDB.
+    |
+    */
+
+    media: {
+      type: [
+        {
+          type: {
+            type: String,
+            enum: ["image", "video"],
+            required: true,
+          },
+
+          url: {
+            type: String,
+            required: true,
+          },
+
+          publicId: {
+            type: String,
+            required: true,
+          },
+        },
+      ],
+      default: [],
+    },
+
+    /*
      * Set when a moderator removes the comment through a report.
      * Hidden from members, kept for Moderation History.
      */
+
     isRemoved: {
       type: Boolean,
       default: false,
@@ -94,6 +128,10 @@ postCommentSchema.methods.toSafeObject = function () {
     group: this.group,
     author: this.author,
     content: this.content,
+
+    // Cloudinary media
+    media: this.media,
+
     parentComment: this.parentComment,
     createdAt: this.createdAt,
     updatedAt: this.updatedAt,
