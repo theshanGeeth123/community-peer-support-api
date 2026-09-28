@@ -11,22 +11,20 @@ import groupMembershipRoutes from "./routes/groupMembership.routes.js";
 import postRoutes from "./routes/post.routes.js";
 import commentReactRoutes from "./routes/commentReact.routes.js";
 import globalPostRoutes from "./routes/globalPost.routes.js";
+import reportRoutes from "./routes/report.routes.js";
+import chatbotRoutes from "./routes/chatbot.routes.js";
+import notificationRoutes from "./routes/notification.routes.js";
 
 import {
   globalErrorHandler,
   notFoundHandler,
 } from "./middleware/error.middleware.js";
 
-const app =
-  express();
+const app = express();
 
-app.disable(
-  "x-powered-by"
-);
+app.disable("x-powered-by");
 
-app.use(
-  helmet()
-);
+app.use(helmet());
 
 app.use(
   cors({
@@ -36,7 +34,9 @@ app.use(
 );
 
 app.use(
-  express.json()
+  express.json({
+    limit: "100kb",
+  })
 );
 
 app.use(
@@ -46,13 +46,8 @@ app.use(
   })
 );
 
-if (
-  process.env.NODE_ENV ===
-  "development"
-) {
-  app.use(
-    morgan("dev")
-  );
+if (process.env.NODE_ENV === "development") {
+  app.use(morgan("dev"));
 }
 
 /*
@@ -86,6 +81,40 @@ app.use(
   groupMembershipRoutes
 );
 
+/*
+|--------------------------------------------------------------------------
+| PUBLIC CHATBOT
+|--------------------------------------------------------------------------
+|
+| IMPORTANT:
+| This route MUST stay BEFORE:
+|
+|     app.use("/api/v1", postRoutes);
+|
+| postRoutes uses router.use(authenticate),
+| so placing the chatbot after it would incorrectly
+| require authentication for /api/v1/chatbot/message.
+|
+| No authentication is required for this chatbot.
+|
+*/
+
+app.use(
+  "/api/v1/chatbot",
+  chatbotRoutes
+);
+
+/*
+|--------------------------------------------------------------------------
+| POST ROUTES
+|--------------------------------------------------------------------------
+|
+| This router is mounted broadly on /api/v1
+| and requires authentication.
+| Keep public routes such as chatbot ABOVE this.
+|
+*/
+
 app.use(
   "/api/v1",
   postRoutes
@@ -117,18 +146,24 @@ app.use(
   globalPostRoutes
 );
 
+app.use(
+  "/api/v1/reports",
+  reportRoutes
+);
+
+app.use(
+  "/api/v1/notifications",
+  notificationRoutes
+);
+
 /*
 |--------------------------------------------------------------------------
 | ERROR HANDLING
 |--------------------------------------------------------------------------
 */
 
-app.use(
-  notFoundHandler
-);
+app.use(notFoundHandler);
 
-app.use(
-  globalErrorHandler
-);
+app.use(globalErrorHandler);
 
 export default app;

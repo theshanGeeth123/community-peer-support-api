@@ -16,6 +16,11 @@ import {
   deleteCommentMediaFromCloudinary,
 } from "../services/commentMedia.service.js";
 
+import {
+  notifyCommentReply,
+  notifyPostComment,
+} from "../services/notification.service.js";
+
 import AppError from "../utils/AppError.js";
 import asyncHandler from "../utils/asyncHandler.js";
 
@@ -53,7 +58,8 @@ const populateCommentAuthor = (query) => {
 const getActivePostAndGroupOrThrow = async (postId) => {
   const post = await Post.findById(postId);
 
-  if (!post) {
+  // Posts removed by moderation can no longer be commented on.
+  if (!post || post.isRemoved) {
     throw new AppError("Post was not found", 404);
   }
 
@@ -75,7 +81,8 @@ const getActivePostAndGroupOrThrow = async (postId) => {
 const getCommentWithGroupOrThrow = async (commentId) => {
   const comment = await PostComment.findById(commentId);
 
-  if (!comment) {
+  // Comments removed by moderation behave as if they no longer exist.
+  if (!comment || comment.isRemoved) {
     throw new AppError(
       "Comment was not found",
       404
@@ -430,6 +437,18 @@ export const createComment =
         }
       );
 
+      /*
+      |--------------------------------------------------
+      | Notify users about the new comment
+      |--------------------------------------------------
+      */
+
+      void notifyPostComment({
+        post,
+        comment,
+        actorId: req.user._id,
+      });
+
       const populatedComment =
         await populateCommentAuthor(
           PostComment.findById(
@@ -641,7 +660,7 @@ export const deleteComment =
       {
         $inc: {
           commentCount:
-            -commentIds.length,
+            -visibleCommentCount,
         },
       }
     );
@@ -759,6 +778,19 @@ export const createReply =
           },
         }
       );
+
+      /*
+      |--------------------------------------------------
+      | Notify users about the new reply
+      |--------------------------------------------------
+      */
+
+      void notifyCommentReply({
+        post,
+        parentComment,
+        reply,
+        actorId: req.user._id,
+      });
 
       const populatedReply =
         await populateCommentAuthor(

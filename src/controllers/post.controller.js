@@ -11,6 +11,19 @@ import {
   GROUP_STATUS,
   GROUP_MEMBERSHIP_STATUS,
 } from "../constants/group.constants.js";
+import { CONTENT_WARNING, POST_SORT } from "../constants/post.constants.js";
+
+import { detectCrisisContent } from "../services/contentSafety.service.js";
+import { NOT_REMOVED } from "../services/moderationRemoval.service.js";
+import {
+  deletePostImageFromCloudinary,
+  uploadPostImageToCloudinary,
+} from "../services/postImage.service.js";
+import {
+  deleteNotificationsForPost,
+  notifyPostLike,
+  removePostLikeNotification,
+} from "../services/notification.service.js";
 
 import AppError from "../utils/AppError.js";
 import asyncHandler from "../utils/asyncHandler.js";
@@ -24,13 +37,8 @@ const ANONYMOUS_AUTHOR = Object.freeze({
   role: null,
   avatarUrl: null,
   isAnonymized: true,
+  staffBadge: null,
 });
-
-/*
-|--------------------------------------------------------------------------
-| REACTION TYPES
-|--------------------------------------------------------------------------
-*/
 
 const POST_REACTION_TYPES = Object.freeze([
   "like",
@@ -41,46 +49,8 @@ const POST_REACTION_TYPES = Object.freeze([
   "angry",
 ]);
 
-/*
-|--------------------------------------------------------------------------
-| POST SORT OPTIONS
-|--------------------------------------------------------------------------
-*/
-
-const POST_SORT = Object.freeze({
-  NEWEST: "newest",
-  MOST_SUPPORTED: "mostSupported",
-  MOST_DISCUSSED: "mostDiscussed",
-  UNANSWERED: "unanswered",
-});
-
-/*
-|--------------------------------------------------------------------------
-| REMOVED POST FILTER
-|--------------------------------------------------------------------------
-*/
-
-const NOT_REMOVED = {
-  $or: [
-    { isRemoved: { $exists: false } },
-    { isRemoved: false },
-  ],
-};
-
-/*
-|--------------------------------------------------------------------------
-| REGEX HELPER
-|--------------------------------------------------------------------------
-*/
-
 const escapeRegex = (text) =>
   text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-/*
-|--------------------------------------------------------------------------
-| POST SORT
-|--------------------------------------------------------------------------
-*/
 
 const buildPostSort = (sortOption, isSearching) => {
   switch (sortOption) {
@@ -113,12 +83,6 @@ const buildPostSort = (sortOption, isSearching) => {
   }
 };
 
-/*
-|--------------------------------------------------------------------------
-| POPULATION HELPERS
-|--------------------------------------------------------------------------
-*/
-
 const populatePostAuthor = (query) => {
   return query.populate({
     path: "author",
@@ -132,12 +96,6 @@ const populateCommentAuthor = (query) => {
     select: AUTHOR_SELECT_FIELDS,
   });
 };
-
-/*
-|--------------------------------------------------------------------------
-| GROUP HELPERS
-|--------------------------------------------------------------------------
-*/
 
 const getActiveGroupOrThrow = async (groupId) => {
   const group = await SupportGroup.findOne({
@@ -255,25 +213,16 @@ const assertCanDeleteOrThrow = (
   );
 };
 
-/*
-|--------------------------------------------------------------------------
-| POST / COMMENT LOOKUP
-|--------------------------------------------------------------------------
-*/
-
 const getPostWithGroupOrThrow = async (
   postId,
-  options = {}
+  { allowRemoved = false } = {}
 ) => {
   const post = await populatePostAuthor(
     Post.findById(postId)
   );
 
-  if (!post) {
-    throw new AppError(
-      "Post was not found",
-      404
-    );
+  if (!post || (post.isRemoved && !allowRemoved)) {
+    throw new AppError("Post was not found", 404);
   }
 
   const group =
@@ -282,16 +231,6 @@ const getPostWithGroupOrThrow = async (
   if (!group) {
     throw new AppError(
       "Support group was not found",
-      404
-    );
-  }
-
-  if (
-    post.isRemoved &&
-    !options.allowRemoved
-  ) {
-    throw new AppError(
-      "Post was not found",
       404
     );
   }
@@ -332,12 +271,6 @@ const getCommentWithGroupOrThrow =
     };
   };
 
-/*
-|--------------------------------------------------------------------------
-| AUTHOR HELPERS
-|--------------------------------------------------------------------------
-*/
-
 const formatAuthorSummary = (author) => ({
   id: author._id.toString(),
   fullName: author.fullName,
@@ -345,6 +278,16 @@ const formatAuthorSummary = (author) => ({
   avatarUrl: author.avatarUrl,
   isAnonymized: false,
 });
+
+const getAuthorStaffBadge = (post, group) => {
+  if (post.isAnonymous) {
+    return null;
+  }
+
+  return isGroupStaffOrAdmin(post.author, group)
+    ? post.author.role
+    : null;
+};
 
 const redactPostAuthor = (
   post,
@@ -363,36 +306,24 @@ const redactPostAuthor = (
       group
     )
   ) {
-    return formatAuthorSummary(
-      post.author
-    );
+    return {
+      ...formatAuthorSummary(post.author),
+      staffBadge: getAuthorStaffBadge(post, group),
+    };
   }
 
   return ANONYMOUS_AUTHOR;
 };
 
-/*
-|--------------------------------------------------------------------------
-| CRISIS FLAG HELPERS
-|--------------------------------------------------------------------------
-*/
-
-const formatCrisisFlag = (
-  crisisFlag
-) => ({
+const formatCrisisFlag = (crisisFlag) => ({
   isFlagged: true,
-  matchedTerms:
-    crisisFlag.matchedTerms,
-  flaggedAt:
-    crisisFlag.flaggedAt,
-  isHandled:
-    Boolean(crisisFlag.handledAt),
-  handledBy:
-    crisisFlag.handledBy
-      ? crisisFlag.handledBy.toString()
-      : null,
-  handledAt:
-    crisisFlag.handledAt,
+  matchedTerms: crisisFlag.matchedTerms,
+  flaggedAt: crisisFlag.flaggedAt,
+  isHandled: Boolean(crisisFlag.handledAt),
+  handledBy: crisisFlag.handledBy
+    ? crisisFlag.handledBy.toString()
+    : null,
+  handledAt: crisisFlag.handledAt,
 });
 
 const buildCrisisFlagForViewer = (
@@ -415,11 +346,54 @@ const buildCrisisFlagForViewer = (
   );
 };
 
-/*
-|--------------------------------------------------------------------------
-| POST REACTION HELPERS
-|--------------------------------------------------------------------------
-*/
+const getStaffGroupIds = async (user) => {
+  if (user.role === USER_ROLES.ADMIN) {
+    return null;
+  }
+
+  const filter =
+    user.role === USER_ROLES.MODERATOR
+      ? { moderators: user._id }
+      : { peerSupporters: user._id };
+
+  const groups = await SupportGroup.find(
+    filter
+  ).select("_id");
+
+  return groups.map(
+    (group) => group._id
+  );
+};
+
+const buildStaffGroupFilter = (
+  staffGroupIds,
+  requestedGroupId
+) => {
+  if (requestedGroupId) {
+    const canSeeGroup =
+      staffGroupIds === null ||
+      staffGroupIds.some(
+        (id) =>
+          id.toString() ===
+          requestedGroupId
+      );
+
+    if (!canSeeGroup) {
+      throw new AppError(
+        "You are not assigned to this group",
+        403
+      );
+    }
+
+    return requestedGroupId;
+  }
+
+  return staffGroupIds === null
+    ? undefined
+    : {
+        $in: staffGroupIds,
+      };
+};
 
 const getPostReactionData = async (
   posts,
@@ -449,7 +423,6 @@ const getPostReactionData = async (
       post._id.toString(),
       {
         myReaction: null,
-
         reactionCounts: {
           like: 0,
           love: 0,
@@ -495,93 +468,6 @@ const getPostReactionData = async (
   return reactionMap;
 };
 
-/*
-|--------------------------------------------------------------------------
-| COMMENT REACTION HELPERS
-|--------------------------------------------------------------------------
-*/
-
-const getCommentReactionData = async (
-  comments,
-  userId
-) => {
-  if (!comments.length) {
-    return new Map();
-  }
-
-  const commentIds =
-    comments.map(
-      (comment) => comment._id
-    );
-
-  const reactions =
-    await CommentReaction.find({
-      comment: {
-        $in: commentIds,
-      },
-    }).select(
-      "comment user reactionType"
-    );
-
-  const reactionMap = new Map();
-
-  for (const comment of comments) {
-    reactionMap.set(
-      comment._id.toString(),
-      {
-        myReaction: null,
-
-        reactionCounts: {
-          like: 0,
-          love: 0,
-          haha: 0,
-          wow: 0,
-          sad: 0,
-          angry: 0,
-        },
-      }
-    );
-  }
-
-  for (const reaction of reactions) {
-    const commentId =
-      reaction.comment.toString();
-
-    const data =
-      reactionMap.get(commentId);
-
-    if (!data) {
-      continue;
-    }
-
-    if (
-      data.reactionCounts[
-        reaction.reactionType
-      ] !== undefined
-    ) {
-      data.reactionCounts[
-        reaction.reactionType
-      ] += 1;
-    }
-
-    if (
-      reaction.user.toString() ===
-      userId.toString()
-    ) {
-      data.myReaction =
-        reaction.reactionType;
-    }
-  }
-
-  return reactionMap;
-};
-
-/*
-|--------------------------------------------------------------------------
-| POST RESPONSE
-|--------------------------------------------------------------------------
-*/
-
 const buildPostResponse = (
   post,
   viewerUser,
@@ -594,7 +480,6 @@ const buildPostResponse = (
       post._id.toString()
     ) ?? {
       myReaction: null,
-
       reactionCounts: {
         like: 0,
         love: 0,
@@ -607,24 +492,19 @@ const buildPostResponse = (
 
   return {
     ...post.toSafeObject(),
-
     author: redactPostAuthor(
       post,
       viewerUser,
       group
     ),
-
     likedByMe:
       likedPostIdSet.has(
         post._id.toString()
       ),
-
     myReaction:
       reactionData.myReaction,
-
     reactionCounts:
       reactionData.reactionCounts,
-
     crisisFlag:
       buildCrisisFlagForViewer(
         post,
@@ -634,155 +514,85 @@ const buildPostResponse = (
   };
 };
 
-/*
-|--------------------------------------------------------------------------
-| STAFF HELPERS
-|--------------------------------------------------------------------------
-*/
-
-const getStaffGroupIds = async (
-  user
+const buildPostsWithGroupNames = async (
+  posts,
+  viewerUser
 ) => {
-  if (user.role === USER_ROLES.ADMIN) {
-    return null;
+  if (posts.length === 0) {
+    return [];
   }
 
-  const filter =
-    user.role === USER_ROLES.MODERATOR
-      ? {
-          moderators: user._id,
-        }
-      : {
-          peerSupporters: user._id,
-        };
-
-  const groups =
-    await SupportGroup.find(
-      filter
-    ).select("_id");
-
-  return groups.map(
-    (group) => group._id
-  );
-};
-
-const buildStaffGroupFilter = (
-  staffGroupIds,
-  requestedGroupId
-) => {
-  if (requestedGroupId) {
-    const canSeeGroup =
-      staffGroupIds === null ||
-      staffGroupIds.some(
-        (id) =>
-          id.toString() ===
-          requestedGroupId
-      );
-
-    if (!canSeeGroup) {
-      throw new AppError(
-        "You are not assigned to this group",
-        403
-      );
-    }
-
-    return requestedGroupId;
-  }
-
-  return staffGroupIds === null
-    ? undefined
-    : {
-        $in: staffGroupIds,
-      };
-};
-
-/*
-|--------------------------------------------------------------------------
-| BUILD POSTS WITH GROUP NAMES
-|--------------------------------------------------------------------------
-*/
-
-const buildPostsWithGroupNames =
-  async (
-    posts,
-    viewerUser
-  ) => {
-    if (posts.length === 0) {
-      return [];
-    }
-
-    const [
-      groups,
-      likes,
-      reactionMap,
-    ] = await Promise.all([
-      SupportGroup.find({
-        _id: {
-          $in: [
-            ...new Set(
-              posts.map(
-                (post) =>
-                  post.group.toString()
-              )
-            ),
-          ],
-        },
-      }),
-
-      PostLike.find({
-        post: {
-          $in: posts.map(
-            (post) => post._id
+  const [
+    groups,
+    likes,
+    reactionMap,
+  ] = await Promise.all([
+    SupportGroup.find({
+      _id: {
+        $in: [
+          ...new Set(
+            posts.map(
+              (post) =>
+                post.group.toString()
+            )
           ),
-        },
-        user: viewerUser._id,
-      }),
+        ],
+      },
+    }),
 
-      getPostReactionData(
-        posts,
-        viewerUser._id
-      ),
-    ]);
+    PostLike.find({
+      post: {
+        $in: posts.map(
+          (post) => post._id
+        ),
+      },
+      user: viewerUser._id,
+    }),
 
-    const groupMap = new Map(
-      groups.map((group) => [
-        group._id.toString(),
-        group,
-      ])
+    getPostReactionData(
+      posts,
+      viewerUser._id
+    ),
+  ]);
+
+  const groupMap = new Map(
+    groups.map((group) => [
+      group._id.toString(),
+      group,
+    ])
+  );
+
+  const likedPostIdSet =
+    new Set(
+      likes.map((like) =>
+        like.post.toString()
+      )
     );
 
-    const likedPostIdSet =
-      new Set(
-        likes.map((like) =>
-          like.post.toString()
-        )
-      );
-
-    return posts
-      .filter((post) =>
-        groupMap.has(
-          post.group.toString()
-        )
+  return posts
+    .filter((post) =>
+      groupMap.has(
+        post.group.toString()
       )
-      .map((post) => {
-        const group =
-          groupMap.get(
-            post.group.toString()
-          );
+    )
+    .map((post) => {
+      const group =
+        groupMap.get(
+          post.group.toString()
+        );
 
-        return {
-          ...buildPostResponse(
-            post,
-            viewerUser,
-            group,
-            likedPostIdSet,
-            reactionMap
-          ),
-
-          groupName: group.name,
-        };
-      });
-  };
+      return {
+        ...buildPostResponse(
+          post,
+          viewerUser,
+          group,
+          likedPostIdSet,
+          reactionMap
+        ),
+        groupName: group.name,
+      };
+    });
+};
 
 /*
 |--------------------------------------------------------------------------
@@ -790,60 +600,199 @@ const buildPostsWithGroupNames =
 |--------------------------------------------------------------------------
 */
 
-export const createPost =
-  asyncHandler(
-    async (req, res) => {
-      const group =
-        await getActiveGroupOrThrow(
-          req.params.groupId
-        );
-
-      await assertCanPostOrThrow(
-        group,
-        req.user
+export const createPost = asyncHandler(
+  async (req, res) => {
+    const group =
+      await getActiveGroupOrThrow(
+        req.params.groupId
       );
 
-      const post =
-        await Post.create({
-          group: group._id,
-          author: req.user._id,
-          content:
-            req.body.content.trim(),
-          isAnonymous:
-            Boolean(
-              req.body.isAnonymous
-            ),
-        });
+    await assertCanPostOrThrow(
+      group,
+      req.user
+    );
 
-      const populatedPost =
-        await populatePostAuthor(
-          Post.findById(post._id)
+    const content =
+      req.body.content.trim();
+
+    const crisisCheck =
+      detectCrisisContent(content);
+
+    const contentWarnings = new Set(
+      req.body.contentWarnings ?? []
+    );
+
+    if (crisisCheck.isCrisis) {
+      contentWarnings.add(
+        CONTENT_WARNING.SUICIDE_SELF_HARM
+      );
+    }
+
+    let uploadedImage = null;
+
+    if (req.file) {
+      try {
+        uploadedImage =
+          await uploadPostImageToCloudinary(
+            req.file.buffer
+          );
+      } catch (error) {
+        console.error(
+          "[post images] Upload failed:",
+          error?.message ?? error
         );
 
-      return res
-        .status(201)
-        .json({
-          success: true,
-          message:
-            "Post created successfully",
-
-          data: {
-            post:
-              buildPostResponse(
-                populatedPost,
-                req.user,
-                group,
-                new Set(),
-                new Map()
-              ),
-          },
-        });
+        throw new AppError(
+          "The image could not be uploaded. Please try again.",
+          502
+        );
+      }
     }
-  );
+
+    let post;
+
+    try {
+      post = await Post.create({
+        group: group._id,
+        author: req.user._id,
+        content,
+        isAnonymous: Boolean(
+          req.body.isAnonymous
+        ),
+        contentWarnings: [
+          ...contentWarnings,
+        ],
+        imageUrl:
+          uploadedImage?.secureUrl ?? null,
+        imagePublicId:
+          uploadedImage?.publicId ?? null,
+        crisisFlag:
+          crisisCheck.isCrisis
+            ? {
+                isFlagged: true,
+                matchedTerms:
+                  crisisCheck.matchedTerms,
+                flaggedAt: new Date(),
+              }
+            : undefined,
+      });
+    } catch (error) {
+      await deletePostImageFromCloudinary(
+        uploadedImage?.publicId
+      );
+
+      throw error;
+    }
+
+    const populatedPost =
+      await populatePostAuthor(
+        Post.findById(post._id)
+      );
+
+    return res.status(201).json({
+      success: true,
+      message: "Post created successfully",
+      data: {
+        post: buildPostResponse(
+          populatedPost,
+          req.user,
+          group,
+          new Set(),
+          new Map()
+        ),
+        safety: {
+          crisisDetected:
+            crisisCheck.isCrisis,
+        },
+      },
+    });
+  }
+);
 
 /*
 |--------------------------------------------------------------------------
-| CRISIS ALERTS
+| GET POST BY ID
+|--------------------------------------------------------------------------
+*/
+
+export const getPostById = asyncHandler(
+  async (req, res) => {
+    const {
+      post,
+      group,
+    } = await getPostWithGroupOrThrow(
+      req.params.postId,
+      {
+        allowRemoved: true,
+      }
+    );
+
+    await assertCanAccessGroupContentOrThrow(
+      group,
+      req.user
+    );
+
+    const isStaff =
+      isGroupStaffOrAdmin(
+        req.user,
+        group
+      );
+
+    if (post.isRemoved && !isStaff) {
+      throw new AppError(
+        "Post was not found",
+        404
+      );
+    }
+
+    const existingLike =
+      await PostLike.findOne({
+        post: post._id,
+        user: req.user._id,
+      });
+
+    const likedPostIdSet =
+      new Set(
+        existingLike
+          ? [post._id.toString()]
+          : []
+      );
+
+    const reactionMap =
+      await getPostReactionData(
+        [post],
+        req.user._id
+      );
+
+    return res.status(200).json({
+      success: true,
+      message: "Post retrieved successfully",
+      data: {
+        post: {
+          ...buildPostResponse(
+            post,
+            req.user,
+            group,
+            likedPostIdSet,
+            reactionMap
+          ),
+          ...(post.isRemoved
+            ? {
+                removedAt:
+                  post.removedAt,
+                removalReason:
+                  post.removalReason,
+              }
+            : {}),
+        },
+      },
+    });
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
+| CRISIS ALERTS (group staff)
 |--------------------------------------------------------------------------
 */
 
@@ -851,17 +800,11 @@ export const getCrisisAlerts =
   asyncHandler(
     async (req, res) => {
       const status =
-        req.query.status ||
-        "open";
-
+        req.query.status || "open";
       const page =
-        Number(req.query.page) ||
-        1;
-
+        Number(req.query.page) || 1;
       const limit =
-        Number(req.query.limit) ||
-        20;
-
+        Number(req.query.limit) || 20;
       const skip =
         (page - 1) * limit;
 
@@ -871,9 +814,7 @@ export const getCrisisAlerts =
         );
 
       const filter = {
-        "crisisFlag.isFlagged":
-          true,
-
+        "crisisFlag.isFlagged": true,
         ...NOT_REMOVED,
       };
 
@@ -898,8 +839,7 @@ export const getCrisisAlerts =
         );
 
       if (groupFilter) {
-        filter.group =
-          groupFilter;
+        filter.group = groupFilter;
       }
 
       const [
@@ -933,26 +873,21 @@ export const getCrisisAlerts =
         .status(200)
         .json({
           success: true,
-
           message:
             "Crisis alerts retrieved successfully",
-
           data: {
             posts:
               await buildPostsWithGroupNames(
                 posts,
                 req.user
               ),
-
             pagination: {
               page,
               limit,
               totalPosts,
               totalPages,
-
               hasNextPage:
                 page < totalPages,
-
               hasPreviousPage:
                 page > 1,
             },
@@ -963,7 +898,7 @@ export const getCrisisAlerts =
 
 /*
 |--------------------------------------------------------------------------
-| NEEDS RESPONSE QUEUE
+| NEEDS A RESPONSE QUEUE (group staff)
 |--------------------------------------------------------------------------
 */
 
@@ -976,13 +911,9 @@ export const getNeedsResponseQueue =
   asyncHandler(
     async (req, res) => {
       const page =
-        Number(req.query.page) ||
-        1;
-
+        Number(req.query.page) || 1;
       const limit =
-        Number(req.query.limit) ||
-        20;
-
+        Number(req.query.limit) || 20;
       const skip =
         (page - 1) * limit;
 
@@ -999,11 +930,9 @@ export const getNeedsResponseQueue =
 
       const baseFilter = {
         ...NOT_REMOVED,
-
         author: {
           $ne: req.user._id,
         },
-
         ...(groupFilter
           ? {
               group: groupFilter,
@@ -1013,10 +942,8 @@ export const getNeedsResponseQueue =
 
       const crisisFilter = {
         ...baseFilter,
-
         "crisisFlag.isFlagged":
           true,
-
         "crisisFlag.handledAt":
           null,
       };
@@ -1033,18 +960,14 @@ export const getNeedsResponseQueue =
 
       const unansweredFilter = {
         ...baseFilter,
-
         commentCount: 0,
-
         createdAt: {
           $gte: oldestDate,
         },
-
         $nor: [
           {
             "crisisFlag.isFlagged":
               true,
-
             "crisisFlag.handledAt":
               null,
           },
@@ -1116,37 +1039,27 @@ export const getNeedsResponseQueue =
         .status(200)
         .json({
           success: true,
-
           message:
             "Needs-response queue retrieved successfully",
-
           data: {
             crisisAlerts,
             unanswered,
-
             counts: {
               crisisAlerts:
                 totalCrisisAlerts,
-
               unanswered:
                 totalUnanswered,
             },
-
             maxAgeDays:
               NEEDS_RESPONSE_MAX_AGE_DAYS,
-
             pagination: {
               page,
               limit,
-
               totalPosts:
                 totalUnanswered,
-
               totalPages,
-
               hasNextPage:
                 page < totalPages,
-
               hasPreviousPage:
                 page > 1,
             },
@@ -1194,12 +1107,10 @@ export const markCrisisAlertHandled =
       }
 
       if (
-        !post.crisisFlag
-          .handledAt
+        !post.crisisFlag.handledAt
       ) {
         post.crisisFlag.handledBy =
           req.user._id;
-
         post.crisisFlag.handledAt =
           new Date();
 
@@ -1210,10 +1121,8 @@ export const markCrisisAlertHandled =
         .status(200)
         .json({
           success: true,
-
           message:
             "Crisis alert marked as handled",
-
           data: {
             crisisFlag:
               formatCrisisFlag(
@@ -1236,7 +1145,6 @@ export const getMyFeed =
       const memberships =
         await GroupMembership.find({
           user: req.user._id,
-
           status:
             GROUP_MEMBERSHIP_STATUS.ACTIVE,
         }).select("group");
@@ -1248,13 +1156,9 @@ export const getMyFeed =
         );
 
       const page =
-        Number(req.query.page) ||
-        1;
-
+        Number(req.query.page) || 1;
       const limit =
-        Number(req.query.limit) ||
-        20;
-
+        Number(req.query.limit) || 20;
       const skip =
         (page - 1) * limit;
 
@@ -1262,7 +1166,6 @@ export const getMyFeed =
         group: {
           $in: groupIds,
         },
-
         ...NOT_REMOVED,
       };
 
@@ -1308,7 +1211,6 @@ export const getMyFeed =
               (post) => post._id
             ),
           },
-
           user: req.user._id,
         }),
 
@@ -1337,10 +1239,8 @@ export const getMyFeed =
         .status(200)
         .json({
           success: true,
-
           message:
             "Feed retrieved successfully",
-
           data: {
             posts: posts
               .filter((post) =>
@@ -1362,7 +1262,6 @@ export const getMyFeed =
                     likedPostIdSet,
                     reactionMap
                   ),
-
                   groupName:
                     group.name,
                 };
@@ -1373,10 +1272,8 @@ export const getMyFeed =
               limit,
               totalPosts,
               totalPages,
-
               hasNextPage:
                 page < totalPages,
-
               hasPreviousPage:
                 page > 1,
             },
@@ -1405,35 +1302,26 @@ export const getGroupPosts =
       );
 
       const page =
-        Number(req.query.page) ||
-        1;
-
+        Number(req.query.page) || 1;
       const limit =
-        Number(req.query.limit) ||
-        20;
-
+        Number(req.query.limit) || 20;
       const skip =
         (page - 1) * limit;
 
       const searchText =
         req.query.q?.trim() ?? "";
-
       const isSearching =
         searchText.length > 0;
 
       const filter = {
         group: group._id,
-
         ...NOT_REMOVED,
       };
 
       if (isSearching) {
         filter.content = {
           $regex:
-            escapeRegex(
-              searchText
-            ),
-
+            escapeRegex(searchText),
           $options: "i",
         };
       }
@@ -1481,7 +1369,6 @@ export const getGroupPosts =
               (post) => post._id
             ),
           },
-
           user: req.user._id,
         }),
 
@@ -1510,13 +1397,11 @@ export const getGroupPosts =
         .status(200)
         .json({
           success: true,
-
           message:
             "Posts retrieved successfully",
-
           data: {
-            posts:
-              posts.map((post) =>
+            posts: posts.map(
+              (post) =>
                 buildPostResponse(
                   post,
                   req.user,
@@ -1524,112 +1409,16 @@ export const getGroupPosts =
                   likedPostIdSet,
                   reactionMap
                 )
-              ),
-
+            ),
             pagination: {
               page,
               limit,
               totalPosts,
               totalPages,
-
               hasNextPage:
                 page < totalPages,
-
               hasPreviousPage:
                 page > 1,
-            },
-          },
-        });
-    }
-  );
-
-/*
-|--------------------------------------------------------------------------
-| GET POST BY ID
-|--------------------------------------------------------------------------
-*/
-
-export const getPostById =
-  asyncHandler(
-    async (req, res) => {
-      const {
-        post,
-        group,
-      } =
-        await getPostWithGroupOrThrow(
-          req.params.postId,
-          {
-            allowRemoved: true,
-          }
-        );
-
-      await assertCanAccessGroupContentOrThrow(
-        group,
-        req.user
-      );
-
-      const isStaff =
-        isGroupStaffOrAdmin(
-          req.user,
-          group
-        );
-
-      if (
-        post.isRemoved &&
-        !isStaff
-      ) {
-        throw new AppError(
-          "Post was not found",
-          404
-        );
-      }
-
-      const existingLike =
-        await PostLike.findOne({
-          post: post._id,
-          user: req.user._id,
-        });
-
-      const likedPostIdSet =
-        new Set(
-          existingLike
-            ? [post._id.toString()]
-            : []
-        );
-
-      const reactionMap =
-        await getPostReactionData(
-          [post],
-          req.user._id
-        );
-
-      return res
-        .status(200)
-        .json({
-          success: true,
-
-          message:
-            "Post retrieved successfully",
-
-          data: {
-            post: {
-              ...buildPostResponse(
-                post,
-                req.user,
-                group,
-                likedPostIdSet,
-                reactionMap
-              ),
-
-              ...(post.isRemoved
-                ? {
-                    removedAt:
-                      post.removedAt,
-
-                    removalReason:
-                      post.removalReason,
-                  }
-                : {}),
             },
           },
         });
@@ -1686,16 +1475,22 @@ export const deletePost =
             }).distinct("_id"),
           },
         }),
+
+        deleteNotificationsForPost(
+          post._id
+        ),
+
+        deletePostImageFromCloudinary(
+          post.imagePublicId
+        ),
       ]);
 
       return res
         .status(200)
         .json({
           success: true,
-
           message:
             "Post deleted successfully",
-
           data: null,
         });
     }
@@ -1733,12 +1528,10 @@ export const togglePostPin =
       const updatedPost =
         await Post.findByIdAndUpdate(
           post._id,
-
           {
             isPinned:
               !post.isPinned,
           },
-
           {
             new: true,
           }
@@ -1748,12 +1541,10 @@ export const togglePostPin =
         .status(200)
         .json({
           success: true,
-
           message:
             updatedPost.isPinned
               ? "Post pinned successfully"
               : "Post unpinned successfully",
-
           data: {
             isPinned:
               updatedPost.isPinned,
@@ -1807,6 +1598,11 @@ export const togglePostLike =
         );
 
         liked = false;
+
+        void removePostLikeNotification({
+          post,
+          actorId: req.user._id,
+        });
       } else {
         try {
           await PostLike.create({
@@ -1824,10 +1620,13 @@ export const togglePostLike =
           );
 
           liked = true;
+
+          void notifyPostLike({
+            post,
+            actorId: req.user._id,
+          });
         } catch (error) {
-          if (
-            error?.code === 11000
-          ) {
+          if (error?.code === 11000) {
             liked = true;
           } else {
             throw error;
@@ -1844,14 +1643,11 @@ export const togglePostLike =
         .status(200)
         .json({
           success: true,
-
           message: liked
             ? "Post liked successfully"
             : "Post unliked successfully",
-
           data: {
             liked,
-
             likeCount:
               updatedPost.likeCount,
           },
@@ -1920,13 +1716,10 @@ export const togglePostReaction =
           .status(200)
           .json({
             success: true,
-
             message:
               "Reaction removed successfully",
-
             data: {
               reaction: null,
-
               ...reactionData.get(
                 post._id.toString()
               ),
@@ -1978,13 +1771,10 @@ export const togglePostReaction =
         .status(200)
         .json({
           success: true,
-
           message:
             "Reaction updated successfully",
-
           data: {
             reaction: reactionType,
-
             ...reactionData.get(
               post._id.toString()
             ),
@@ -1992,6 +1782,86 @@ export const togglePostReaction =
         });
     }
   );
+
+/*
+|--------------------------------------------------------------------------
+| COMMENT REACTION HELPERS
+|--------------------------------------------------------------------------
+*/
+
+const getCommentReactionData = async (
+  comments,
+  userId
+) => {
+  if (!comments.length) {
+    return new Map();
+  }
+
+  const commentIds =
+    comments.map(
+      (comment) => comment._id
+    );
+
+  const reactions =
+    await CommentReaction.find({
+      comment: {
+        $in: commentIds,
+      },
+    }).select(
+      "comment user reactionType"
+    );
+
+  const reactionMap = new Map();
+
+  for (const comment of comments) {
+    reactionMap.set(
+      comment._id.toString(),
+      {
+        myReaction: null,
+        reactionCounts: {
+          like: 0,
+          love: 0,
+          haha: 0,
+          wow: 0,
+          sad: 0,
+          angry: 0,
+        },
+      }
+    );
+  }
+
+  for (const reaction of reactions) {
+    const commentId =
+      reaction.comment.toString();
+
+    const data =
+      reactionMap.get(commentId);
+
+    if (!data) {
+      continue;
+    }
+
+    if (
+      data.reactionCounts[
+        reaction.reactionType
+      ] !== undefined
+    ) {
+      data.reactionCounts[
+        reaction.reactionType
+      ] += 1;
+    }
+
+    if (
+      reaction.user.toString() ===
+      userId.toString()
+    ) {
+      data.myReaction =
+        reaction.reactionType;
+    }
+  }
+
+  return reactionMap;
+};
 
 /*
 |--------------------------------------------------------------------------
@@ -2019,7 +1889,6 @@ export const getPostComments =
         await populateCommentAuthor(
           PostComment.find({
             post: post._id,
-
             ...NOT_REMOVED,
           }).sort({
             createdAt: 1,
@@ -2036,10 +1905,8 @@ export const getPostComments =
         .status(200)
         .json({
           success: true,
-
           message:
             "Comments retrieved successfully",
-
           data: {
             comments:
               comments.map(
@@ -2050,7 +1917,6 @@ export const getPostComments =
                     ) ?? {
                       myReaction:
                         null,
-
                       reactionCounts: {
                         like: 0,
                         love: 0,
@@ -2063,21 +1929,17 @@ export const getPostComments =
 
                   return {
                     ...comment.toSafeObject(),
-
                     author:
                       formatAuthorSummary(
                         comment.author
                       ),
-
                     myReaction:
                       reactionData.myReaction,
-
                     reactionCounts:
                       reactionData.reactionCounts,
                   };
                 }
               ),
-
             totalComments:
               comments.length,
           },
@@ -2136,14 +1998,11 @@ export const createComment =
         .status(201)
         .json({
           success: true,
-
           message:
             "Comment added successfully",
-
           data: {
             comment: {
               ...populatedComment.toSafeObject(),
-
               author:
                 formatAuthorSummary(
                   populatedComment.author
@@ -2198,10 +2057,8 @@ export const deleteComment =
         .status(200)
         .json({
           success: true,
-
           message:
             "Comment deleted successfully",
-
           data: null,
         });
     }

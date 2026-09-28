@@ -3,7 +3,9 @@ import express from "express";
 import {
   changeCurrentUserPassword,
   logoutAllDevices,
+  removeCurrentUserAvatar,
   updateCurrentUserProfile,
+  uploadCurrentUserAvatar,
 } from "../controllers/account.controller.js";
 
 import {
@@ -32,6 +34,10 @@ import {
 } from "../middleware/auth.middleware.js";
 
 import {
+  uploadProfileImageFile,
+} from "../middleware/profileImageUpload.middleware.js";
+
+import {
   authenticationSessionLimiter,
   emailVerificationLimiter,
   forgotPasswordLimiter,
@@ -56,7 +62,8 @@ import {
   verifyEmailOtpValidator,
 } from "../validators/auth.validator.js";
 
-const router = express.Router();
+const router =
+  express.Router();
 
 router.post(
   "/register",
@@ -127,6 +134,21 @@ router.patch(
   updateProfileValidator,
   validateRequest,
   updateCurrentUserProfile
+);
+
+router.post(
+  "/me/avatar",
+  authenticationSessionLimiter,
+  authenticate,
+  uploadProfileImageFile,
+  uploadCurrentUserAvatar
+);
+
+router.delete(
+  "/me/avatar",
+  authenticationSessionLimiter,
+  authenticate,
+  removeCurrentUserAvatar
 );
 
 router.patch(
