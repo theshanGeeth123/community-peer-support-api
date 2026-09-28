@@ -7,8 +7,10 @@ import {
   getMyFeed,
   getPostById,
   getPostComments,
+  markCrisisAlertHandled,
   togglePostLike,
   togglePostPin,
+  togglePostReaction,
 } from "../controllers/post.controller.js";
 
 import {
@@ -17,7 +19,7 @@ import {
   deleteComment,
   createReply,
   toggleCommentHeart,
-} from "../controllers/postEngagement.controller.js";
+} from "../controllers/comment.controller.js";
 
 import { USER_ROLES } from "../constants/auth.constants.js";
 
@@ -29,13 +31,16 @@ import {
 import validateRequest from "../middleware/validate.middleware.js";
 
 import {
-  commentIdParamValidator,
-  createCommentValidator,
   createPostValidator,
   listMyFeedValidator,
   listPostsValidator,
   postIdParamValidator,
 } from "../validators/post.validator.js";
+
+import {
+  createCommentValidator,
+  commentIdParamValidator,
+} from "../validators/comment.validator.js";
 
 const router = express.Router();
 
@@ -65,6 +70,10 @@ router.get(
 | GROUP POSTS
 |--------------------------------------------------------------------------
 */
+
+/*
+ * Accepts JSON, or multipart/form-data with an optional "image" file.
+ */
 
 router.post(
   "/groups/:groupId/posts",
@@ -100,12 +109,50 @@ router.delete(
   deletePost
 );
 
+/*
+|--------------------------------------------------------------------------
+| OLD POST LIKE
+|--------------------------------------------------------------------------
+|
+| Existing like functionality is kept unchanged.
+|
+*/
+
 router.post(
   "/posts/:postId/like",
   postIdParamValidator,
   validateRequest,
   togglePostLike
 );
+
+/*
+|--------------------------------------------------------------------------
+| POST REACTIONS
+|--------------------------------------------------------------------------
+|
+| Multiple reactions:
+|
+| like  → 👍
+| love  → ❤️
+| haha  → 😂
+| wow   → 😮
+| sad   → 😢
+| angry → 😡
+|
+*/
+
+router.post(
+  "/posts/:postId/reaction",
+  postIdParamValidator,
+  validateRequest,
+  togglePostReaction
+);
+
+/*
+|--------------------------------------------------------------------------
+| POST PIN / UNPIN
+|--------------------------------------------------------------------------
+*/
 
 router.post(
   "/posts/:postId/pin",
@@ -123,6 +170,7 @@ router.post(
 /*
  * Get all comments for a post
  */
+
 router.get(
   "/posts/:postId/comments",
   postIdParamValidator,
@@ -133,6 +181,7 @@ router.get(
 /*
  * Create a new comment
  */
+
 router.post(
   "/posts/:postId/comments",
   createCommentValidator,
@@ -143,6 +192,7 @@ router.post(
 /*
  * Update an existing comment
  */
+
 router.patch(
   "/comments/:commentId",
   commentIdParamValidator,
@@ -153,6 +203,7 @@ router.patch(
 /*
  * Delete a comment
  */
+
 router.delete(
   "/comments/:commentId",
   commentIdParamValidator,
@@ -163,6 +214,7 @@ router.delete(
 /*
  * Reply to a comment
  */
+
 router.post(
   "/comments/:commentId/replies",
   commentIdParamValidator,
@@ -173,11 +225,25 @@ router.post(
 /*
  * Heart / unheart a comment
  */
+
 router.post(
   "/comments/:commentId/heart",
   commentIdParamValidator,
   validateRequest,
   toggleCommentHeart
+);
+
+/*
+|--------------------------------------------------------------------------
+| CRISIS ALERT
+|--------------------------------------------------------------------------
+*/
+
+router.patch(
+  "/posts/:postId/crisis-flag/handle",
+  postIdParamValidator,
+  validateRequest,
+  markCrisisAlertHandled
 );
 
 export default router;

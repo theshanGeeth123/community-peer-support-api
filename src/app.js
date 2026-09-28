@@ -9,6 +9,7 @@ import adminRoutes from "./routes/admin.routes.js";
 import groupRoutes from "./routes/group.routes.js";
 import groupMembershipRoutes from "./routes/groupMembership.routes.js";
 import postRoutes from "./routes/post.routes.js";
+import commentReactRoutes from "./routes/commentReact.routes.js";
 import globalPostRoutes from "./routes/globalPost.routes.js";
 
 import {
@@ -88,6 +89,27 @@ app.use(
 app.use(
   "/api/v1",
   postRoutes
+);
+
+/*
+|--------------------------------------------------------------------------
+| COMMENT / REACTION / REPLY ROUTES
+|--------------------------------------------------------------------------
+|
+| Handles:
+| - View comments
+| - Create comments
+| - Edit comments
+| - Delete comments
+| - Replies
+| - Comment hearts
+| - Comment/reply reactions
+|
+*/
+
+app.use(
+  "/api/v1",
+  commentReactRoutes
 );
 
 app.use(

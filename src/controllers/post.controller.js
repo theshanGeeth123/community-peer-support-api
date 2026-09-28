@@ -1,16 +1,22 @@
 import Post from "../models/Post.js";
 import PostComment from "../models/PostComment.js";
 import PostLike from "../models/PostLike.js";
+import PostReaction from "../models/PostReaction.js";
+import CommentReaction from "../models/CommentReaction.js";
 import SupportGroup from "../models/SupportGroup.js";
 import GroupMembership from "../models/GroupMembership.js";
 
 import { USER_ROLES } from "../constants/auth.constants.js";
-import { GROUP_STATUS, GROUP_MEMBERSHIP_STATUS } from "../constants/group.constants.js";
+import {
+  GROUP_STATUS,
+  GROUP_MEMBERSHIP_STATUS,
+} from "../constants/group.constants.js";
 
 import AppError from "../utils/AppError.js";
 import asyncHandler from "../utils/asyncHandler.js";
 
-const AUTHOR_SELECT_FIELDS = "fullName email role avatarUrl accountStatus";
+const AUTHOR_SELECT_FIELDS =
+  "fullName email role avatarUrl accountStatus";
 
 const ANONYMOUS_AUTHOR = Object.freeze({
   id: null,
@@ -20,13 +26,118 @@ const ANONYMOUS_AUTHOR = Object.freeze({
   isAnonymized: true,
 });
 
+/*
+|--------------------------------------------------------------------------
+| REACTION TYPES
+|--------------------------------------------------------------------------
+*/
+
+const POST_REACTION_TYPES = Object.freeze([
+  "like",
+  "love",
+  "haha",
+  "wow",
+  "sad",
+  "angry",
+]);
+
+/*
+|--------------------------------------------------------------------------
+| POST SORT OPTIONS
+|--------------------------------------------------------------------------
+*/
+
+const POST_SORT = Object.freeze({
+  NEWEST: "newest",
+  MOST_SUPPORTED: "mostSupported",
+  MOST_DISCUSSED: "mostDiscussed",
+  UNANSWERED: "unanswered",
+});
+
+/*
+|--------------------------------------------------------------------------
+| REMOVED POST FILTER
+|--------------------------------------------------------------------------
+*/
+
+const NOT_REMOVED = {
+  $or: [
+    { isRemoved: { $exists: false } },
+    { isRemoved: false },
+  ],
+};
+
+/*
+|--------------------------------------------------------------------------
+| REGEX HELPER
+|--------------------------------------------------------------------------
+*/
+
+const escapeRegex = (text) =>
+  text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/*
+|--------------------------------------------------------------------------
+| POST SORT
+|--------------------------------------------------------------------------
+*/
+
+const buildPostSort = (sortOption, isSearching) => {
+  switch (sortOption) {
+    case POST_SORT.MOST_SUPPORTED:
+      return {
+        likeCount: -1,
+        commentCount: -1,
+        createdAt: -1,
+      };
+
+    case POST_SORT.MOST_DISCUSSED:
+      return {
+        commentCount: -1,
+        likeCount: -1,
+        createdAt: -1,
+      };
+
+    case POST_SORT.UNANSWERED:
+      return {
+        createdAt: -1,
+      };
+
+    default:
+      return isSearching
+        ? { createdAt: -1 }
+        : {
+            isPinned: -1,
+            createdAt: -1,
+          };
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| POPULATION HELPERS
+|--------------------------------------------------------------------------
+*/
+
 const populatePostAuthor = (query) => {
-  return query.populate({ path: "author", select: AUTHOR_SELECT_FIELDS });
+  return query.populate({
+    path: "author",
+    select: AUTHOR_SELECT_FIELDS,
+  });
 };
 
 const populateCommentAuthor = (query) => {
-  return query.populate({ path: "author", select: AUTHOR_SELECT_FIELDS });
+  return query.populate({
+    path: "author",
+    select: AUTHOR_SELECT_FIELDS,
+  });
 };
+
+/*
+|--------------------------------------------------------------------------
+| GROUP HELPERS
+|--------------------------------------------------------------------------
+*/
 
 const getActiveGroupOrThrow = async (groupId) => {
   const group = await SupportGroup.findOne({
@@ -35,13 +146,19 @@ const getActiveGroupOrThrow = async (groupId) => {
   });
 
   if (!group) {
-    throw new AppError("Active support group was not found", 404);
+    throw new AppError(
+      "Active support group was not found",
+      404
+    );
   }
 
   return group;
 };
 
-const getActiveMembershipOrThrow = async (groupId, userId) => {
+const getActiveMembershipOrThrow = async (
+  groupId,
+  userId
+) => {
   const membership = await GroupMembership.findOne({
     group: groupId,
     user: userId,
@@ -64,81 +181,162 @@ const isGroupStaffOrAdmin = (user, group) => {
   }
 
   if (user.role === USER_ROLES.MODERATOR) {
-    return group.moderators.some((id) => id.toString() === user._id.toString());
+    return group.moderators.some(
+      (id) =>
+        id.toString() === user._id.toString()
+    );
   }
 
   if (user.role === USER_ROLES.PEER_SUPPORTER) {
-    return group.peerSupporters.some((id) => id.toString() === user._id.toString());
+    return group.peerSupporters.some(
+      (id) =>
+        id.toString() === user._id.toString()
+    );
   }
 
   return false;
 };
 
-const assertCanPostOrThrow = async (group, user) => {
+const assertCanPostOrThrow = async (
+  group,
+  user
+) => {
   if (isGroupStaffOrAdmin(user, group)) {
     return;
   }
 
-  await getActiveMembershipOrThrow(group._id, user._id);
+  await getActiveMembershipOrThrow(
+    group._id,
+    user._id
+  );
 };
 
-const assertCanAccessGroupContentOrThrow = async (group, user) => {
-  if (isGroupStaffOrAdmin(user, group)) {
+const assertCanAccessGroupContentOrThrow =
+  async (group, user) => {
+    if (isGroupStaffOrAdmin(user, group)) {
+      return;
+    }
+
+    const membership =
+      await GroupMembership.findOne({
+        group: group._id,
+        user: user._id,
+        status:
+          GROUP_MEMBERSHIP_STATUS.ACTIVE,
+      });
+
+    if (!membership) {
+      throw new AppError(
+        "You do not have access to this group's posts",
+        403
+      );
+    }
+  };
+
+const assertCanDeleteOrThrow = (
+  authorId,
+  group,
+  user
+) => {
+  const isAuthor =
+    authorId.toString() ===
+    user._id.toString();
+
+  if (
+    isAuthor ||
+    isGroupStaffOrAdmin(user, group)
+  ) {
     return;
   }
 
-  const membership = await GroupMembership.findOne({
-    group: group._id,
-    user: user._id,
-    status: GROUP_MEMBERSHIP_STATUS.ACTIVE,
-  });
-
-  if (!membership) {
-    throw new AppError("You do not have access to this group's posts", 403);
-  }
+  throw new AppError(
+    "You do not have permission to delete this",
+    403
+  );
 };
 
-const assertCanDeleteOrThrow = (authorId, group, user) => {
-  const isAuthor = authorId.toString() === user._id.toString();
+/*
+|--------------------------------------------------------------------------
+| POST / COMMENT LOOKUP
+|--------------------------------------------------------------------------
+*/
 
-  if (isAuthor || isGroupStaffOrAdmin(user, group)) {
-    return;
-  }
-
-  throw new AppError("You do not have permission to delete this", 403);
-};
-
-const getPostWithGroupOrThrow = async (postId) => {
-  const post = await populatePostAuthor(Post.findById(postId));
+const getPostWithGroupOrThrow = async (
+  postId,
+  options = {}
+) => {
+  const post = await populatePostAuthor(
+    Post.findById(postId)
+  );
 
   if (!post) {
-    throw new AppError("Post was not found", 404);
+    throw new AppError(
+      "Post was not found",
+      404
+    );
   }
 
-  const group = await SupportGroup.findById(post.group);
+  const group =
+    await SupportGroup.findById(post.group);
 
   if (!group) {
-    throw new AppError("Support group was not found", 404);
+    throw new AppError(
+      "Support group was not found",
+      404
+    );
   }
 
-  return { post, group };
+  if (
+    post.isRemoved &&
+    !options.allowRemoved
+  ) {
+    throw new AppError(
+      "Post was not found",
+      404
+    );
+  }
+
+  return {
+    post,
+    group,
+  };
 };
 
-const getCommentWithGroupOrThrow = async (commentId) => {
-  const comment = await PostComment.findById(commentId);
+const getCommentWithGroupOrThrow =
+  async (commentId) => {
+    const comment =
+      await PostComment.findById(commentId);
 
-  if (!comment) {
-    throw new AppError("Comment was not found", 404);
-  }
+    if (!comment) {
+      throw new AppError(
+        "Comment was not found",
+        404
+      );
+    }
 
-  const group = await SupportGroup.findById(comment.group);
+    const group =
+      await SupportGroup.findById(
+        comment.group
+      );
 
-  if (!group) {
-    throw new AppError("Support group was not found", 404);
-  }
+    if (!group) {
+      throw new AppError(
+        "Support group was not found",
+        404
+      );
+    }
 
-  return { comment, group };
-};
+    return {
+      comment,
+      group,
+    };
+  };
+
+/*
+|--------------------------------------------------------------------------
+| AUTHOR HELPERS
+|--------------------------------------------------------------------------
+*/
 
 const formatAuthorSummary = (author) => ({
   id: author._id.toString(),
@@ -148,21 +346,443 @@ const formatAuthorSummary = (author) => ({
   isAnonymized: false,
 });
 
-const redactPostAuthor = (post, viewerUser, group) => {
-  const isAuthor = post.author._id.toString() === viewerUser._id.toString();
+const redactPostAuthor = (
+  post,
+  viewerUser,
+  group
+) => {
+  const isAuthor =
+    post.author._id.toString() ===
+    viewerUser._id.toString();
 
-  if (!post.isAnonymous || isAuthor || isGroupStaffOrAdmin(viewerUser, group)) {
-    return formatAuthorSummary(post.author);
+  if (
+    !post.isAnonymous ||
+    isAuthor ||
+    isGroupStaffOrAdmin(
+      viewerUser,
+      group
+    )
+  ) {
+    return formatAuthorSummary(
+      post.author
+    );
   }
 
   return ANONYMOUS_AUTHOR;
 };
 
-const buildPostResponse = (post, viewerUser, group, likedPostIdSet) => ({
-  ...post.toSafeObject(),
-  author: redactPostAuthor(post, viewerUser, group),
-  likedByMe: likedPostIdSet.has(post._id.toString()),
+/*
+|--------------------------------------------------------------------------
+| CRISIS FLAG HELPERS
+|--------------------------------------------------------------------------
+*/
+
+const formatCrisisFlag = (
+  crisisFlag
+) => ({
+  isFlagged: true,
+  matchedTerms:
+    crisisFlag.matchedTerms,
+  flaggedAt:
+    crisisFlag.flaggedAt,
+  isHandled:
+    Boolean(crisisFlag.handledAt),
+  handledBy:
+    crisisFlag.handledBy
+      ? crisisFlag.handledBy.toString()
+      : null,
+  handledAt:
+    crisisFlag.handledAt,
 });
+
+const buildCrisisFlagForViewer = (
+  post,
+  viewerUser,
+  group
+) => {
+  if (
+    !post.crisisFlag?.isFlagged ||
+    !isGroupStaffOrAdmin(
+      viewerUser,
+      group
+    )
+  ) {
+    return null;
+  }
+
+  return formatCrisisFlag(
+    post.crisisFlag
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| POST REACTION HELPERS
+|--------------------------------------------------------------------------
+*/
+
+const getPostReactionData = async (
+  posts,
+  userId
+) => {
+  if (!posts.length) {
+    return new Map();
+  }
+
+  const postIds = posts.map(
+    (post) => post._id
+  );
+
+  const reactions =
+    await PostReaction.find({
+      post: {
+        $in: postIds,
+      },
+    }).select(
+      "post user reactionType"
+    );
+
+  const reactionMap = new Map();
+
+  for (const post of posts) {
+    reactionMap.set(
+      post._id.toString(),
+      {
+        myReaction: null,
+
+        reactionCounts: {
+          like: 0,
+          love: 0,
+          haha: 0,
+          wow: 0,
+          sad: 0,
+          angry: 0,
+        },
+      }
+    );
+  }
+
+  for (const reaction of reactions) {
+    const postId =
+      reaction.post.toString();
+
+    const data =
+      reactionMap.get(postId);
+
+    if (!data) {
+      continue;
+    }
+
+    if (
+      data.reactionCounts[
+        reaction.reactionType
+      ] !== undefined
+    ) {
+      data.reactionCounts[
+        reaction.reactionType
+      ] += 1;
+    }
+
+    if (
+      reaction.user.toString() ===
+      userId.toString()
+    ) {
+      data.myReaction =
+        reaction.reactionType;
+    }
+  }
+
+  return reactionMap;
+};
+
+/*
+|--------------------------------------------------------------------------
+| COMMENT REACTION HELPERS
+|--------------------------------------------------------------------------
+*/
+
+const getCommentReactionData = async (
+  comments,
+  userId
+) => {
+  if (!comments.length) {
+    return new Map();
+  }
+
+  const commentIds =
+    comments.map(
+      (comment) => comment._id
+    );
+
+  const reactions =
+    await CommentReaction.find({
+      comment: {
+        $in: commentIds,
+      },
+    }).select(
+      "comment user reactionType"
+    );
+
+  const reactionMap = new Map();
+
+  for (const comment of comments) {
+    reactionMap.set(
+      comment._id.toString(),
+      {
+        myReaction: null,
+
+        reactionCounts: {
+          like: 0,
+          love: 0,
+          haha: 0,
+          wow: 0,
+          sad: 0,
+          angry: 0,
+        },
+      }
+    );
+  }
+
+  for (const reaction of reactions) {
+    const commentId =
+      reaction.comment.toString();
+
+    const data =
+      reactionMap.get(commentId);
+
+    if (!data) {
+      continue;
+    }
+
+    if (
+      data.reactionCounts[
+        reaction.reactionType
+      ] !== undefined
+    ) {
+      data.reactionCounts[
+        reaction.reactionType
+      ] += 1;
+    }
+
+    if (
+      reaction.user.toString() ===
+      userId.toString()
+    ) {
+      data.myReaction =
+        reaction.reactionType;
+    }
+  }
+
+  return reactionMap;
+};
+
+/*
+|--------------------------------------------------------------------------
+| POST RESPONSE
+|--------------------------------------------------------------------------
+*/
+
+const buildPostResponse = (
+  post,
+  viewerUser,
+  group,
+  likedPostIdSet,
+  reactionMap = new Map()
+) => {
+  const reactionData =
+    reactionMap.get(
+      post._id.toString()
+    ) ?? {
+      myReaction: null,
+
+      reactionCounts: {
+        like: 0,
+        love: 0,
+        haha: 0,
+        wow: 0,
+        sad: 0,
+        angry: 0,
+      },
+    };
+
+  return {
+    ...post.toSafeObject(),
+
+    author: redactPostAuthor(
+      post,
+      viewerUser,
+      group
+    ),
+
+    likedByMe:
+      likedPostIdSet.has(
+        post._id.toString()
+      ),
+
+    myReaction:
+      reactionData.myReaction,
+
+    reactionCounts:
+      reactionData.reactionCounts,
+
+    crisisFlag:
+      buildCrisisFlagForViewer(
+        post,
+        viewerUser,
+        group
+      ),
+  };
+};
+
+/*
+|--------------------------------------------------------------------------
+| STAFF HELPERS
+|--------------------------------------------------------------------------
+*/
+
+const getStaffGroupIds = async (
+  user
+) => {
+  if (user.role === USER_ROLES.ADMIN) {
+    return null;
+  }
+
+  const filter =
+    user.role === USER_ROLES.MODERATOR
+      ? {
+          moderators: user._id,
+        }
+      : {
+          peerSupporters: user._id,
+        };
+
+  const groups =
+    await SupportGroup.find(
+      filter
+    ).select("_id");
+
+  return groups.map(
+    (group) => group._id
+  );
+};
+
+const buildStaffGroupFilter = (
+  staffGroupIds,
+  requestedGroupId
+) => {
+  if (requestedGroupId) {
+    const canSeeGroup =
+      staffGroupIds === null ||
+      staffGroupIds.some(
+        (id) =>
+          id.toString() ===
+          requestedGroupId
+      );
+
+    if (!canSeeGroup) {
+      throw new AppError(
+        "You are not assigned to this group",
+        403
+      );
+    }
+
+    return requestedGroupId;
+  }
+
+  return staffGroupIds === null
+    ? undefined
+    : {
+        $in: staffGroupIds,
+      };
+};
+
+/*
+|--------------------------------------------------------------------------
+| BUILD POSTS WITH GROUP NAMES
+|--------------------------------------------------------------------------
+*/
+
+const buildPostsWithGroupNames =
+  async (
+    posts,
+    viewerUser
+  ) => {
+    if (posts.length === 0) {
+      return [];
+    }
+
+    const [
+      groups,
+      likes,
+      reactionMap,
+    ] = await Promise.all([
+      SupportGroup.find({
+        _id: {
+          $in: [
+            ...new Set(
+              posts.map(
+                (post) =>
+                  post.group.toString()
+              )
+            ),
+          ],
+        },
+      }),
+
+      PostLike.find({
+        post: {
+          $in: posts.map(
+            (post) => post._id
+          ),
+        },
+        user: viewerUser._id,
+      }),
+
+      getPostReactionData(
+        posts,
+        viewerUser._id
+      ),
+    ]);
+
+    const groupMap = new Map(
+      groups.map((group) => [
+        group._id.toString(),
+        group,
+      ])
+    );
+
+    const likedPostIdSet =
+      new Set(
+        likes.map((like) =>
+          like.post.toString()
+        )
+      );
+
+    return posts
+      .filter((post) =>
+        groupMap.has(
+          post.group.toString()
+        )
+      )
+      .map((post) => {
+        const group =
+          groupMap.get(
+            post.group.toString()
+          );
+
+        return {
+          ...buildPostResponse(
+            post,
+            viewerUser,
+            group,
+            likedPostIdSet,
+            reactionMap
+          ),
+
+          groupName: group.name,
+        };
+      });
+  };
 
 /*
 |--------------------------------------------------------------------------
@@ -170,98 +790,600 @@ const buildPostResponse = (post, viewerUser, group, likedPostIdSet) => ({
 |--------------------------------------------------------------------------
 */
 
-export const createPost = asyncHandler(async (req, res) => {
-  const group = await getActiveGroupOrThrow(req.params.groupId);
+export const createPost =
+  asyncHandler(
+    async (req, res) => {
+      const group =
+        await getActiveGroupOrThrow(
+          req.params.groupId
+        );
 
-  await assertCanPostOrThrow(group, req.user);
+      await assertCanPostOrThrow(
+        group,
+        req.user
+      );
 
-  const post = await Post.create({
-    group: group._id,
-    author: req.user._id,
-    content: req.body.content.trim(),
-    isAnonymous: Boolean(req.body.isAnonymous),
-  });
+      const post =
+        await Post.create({
+          group: group._id,
+          author: req.user._id,
+          content:
+            req.body.content.trim(),
+          isAnonymous:
+            Boolean(
+              req.body.isAnonymous
+            ),
+        });
 
-  const populatedPost = await populatePostAuthor(Post.findById(post._id));
+      const populatedPost =
+        await populatePostAuthor(
+          Post.findById(post._id)
+        );
 
-  return res.status(201).json({
-    success: true,
-    message: "Post created successfully",
-    data: {
-      post: buildPostResponse(populatedPost, req.user, group, new Set()),
-    },
-  });
-});
+      return res
+        .status(201)
+        .json({
+          success: true,
+          message:
+            "Post created successfully",
+
+          data: {
+            post:
+              buildPostResponse(
+                populatedPost,
+                req.user,
+                group,
+                new Set(),
+                new Map()
+              ),
+          },
+        });
+    }
+  );
 
 /*
 |--------------------------------------------------------------------------
-| MY FEED (posts from all my joined groups, combined)
+| CRISIS ALERTS
 |--------------------------------------------------------------------------
 */
 
-export const getMyFeed = asyncHandler(async (req, res) => {
-  const memberships = await GroupMembership.find({
-    user: req.user._id,
-    status: GROUP_MEMBERSHIP_STATUS.ACTIVE,
-  }).select("group");
+export const getCrisisAlerts =
+  asyncHandler(
+    async (req, res) => {
+      const status =
+        req.query.status ||
+        "open";
 
-  const groupIds = memberships.map((membership) => membership.group);
+      const page =
+        Number(req.query.page) ||
+        1;
 
-  const page = req.query.page || 1;
-  const limit = req.query.limit || 20;
-  const skip = (page - 1) * limit;
+      const limit =
+        Number(req.query.limit) ||
+        20;
 
-  const filter = { group: { $in: groupIds } };
+      const skip =
+        (page - 1) * limit;
 
-  const [posts, totalPosts, groups] = await Promise.all([
-    populatePostAuthor(
-      Post.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit)
-    ),
+      const staffGroupIds =
+        await getStaffGroupIds(
+          req.user
+        );
 
-    Post.countDocuments(filter),
+      const filter = {
+        "crisisFlag.isFlagged":
+          true,
 
-    SupportGroup.find({ _id: { $in: groupIds } }),
-  ]);
+        ...NOT_REMOVED,
+      };
 
-  const groupMap = new Map(
-    groups.map((group) => [group._id.toString(), group])
+      if (status === "open") {
+        filter[
+          "crisisFlag.handledAt"
+        ] = null;
+      } else if (
+        status === "handled"
+      ) {
+        filter[
+          "crisisFlag.handledAt"
+        ] = {
+          $ne: null,
+        };
+      }
+
+      const groupFilter =
+        buildStaffGroupFilter(
+          staffGroupIds,
+          req.query.groupId
+        );
+
+      if (groupFilter) {
+        filter.group =
+          groupFilter;
+      }
+
+      const [
+        posts,
+        totalPosts,
+      ] = await Promise.all([
+        populatePostAuthor(
+          Post.find(filter)
+            .sort({
+              "crisisFlag.flaggedAt":
+                -1,
+            })
+            .skip(skip)
+            .limit(limit)
+        ),
+
+        Post.countDocuments(
+          filter
+        ),
+      ]);
+
+      const totalPages =
+        Math.max(
+          1,
+          Math.ceil(
+            totalPosts / limit
+          )
+        );
+
+      return res
+        .status(200)
+        .json({
+          success: true,
+
+          message:
+            "Crisis alerts retrieved successfully",
+
+          data: {
+            posts:
+              await buildPostsWithGroupNames(
+                posts,
+                req.user
+              ),
+
+            pagination: {
+              page,
+              limit,
+              totalPosts,
+              totalPages,
+
+              hasNextPage:
+                page < totalPages,
+
+              hasPreviousPage:
+                page > 1,
+            },
+          },
+        });
+    }
   );
 
-  const likes = await PostLike.find({
-    post: { $in: posts.map((post) => post._id) },
-    user: req.user._id,
-  });
+/*
+|--------------------------------------------------------------------------
+| NEEDS RESPONSE QUEUE
+|--------------------------------------------------------------------------
+*/
 
-  const likedPostIdSet = new Set(likes.map((like) => like.post.toString()));
+const NEEDS_RESPONSE_MAX_AGE_DAYS =
+  14;
 
-  const totalPages = Math.max(1, Math.ceil(totalPosts / limit));
+const CRISIS_QUEUE_LIMIT = 50;
 
-  return res.status(200).json({
-    success: true,
-    message: "Feed retrieved successfully",
-    data: {
-      posts: posts
-        .filter((post) => groupMap.has(post.group.toString()))
-        .map((post) => {
-          const group = groupMap.get(post.group.toString());
+export const getNeedsResponseQueue =
+  asyncHandler(
+    async (req, res) => {
+      const page =
+        Number(req.query.page) ||
+        1;
 
-          return {
-            ...buildPostResponse(post, req.user, group, likedPostIdSet),
-            groupName: group.name,
-          };
+      const limit =
+        Number(req.query.limit) ||
+        20;
+
+      const skip =
+        (page - 1) * limit;
+
+      const staffGroupIds =
+        await getStaffGroupIds(
+          req.user
+        );
+
+      const groupFilter =
+        buildStaffGroupFilter(
+          staffGroupIds,
+          req.query.groupId
+        );
+
+      const baseFilter = {
+        ...NOT_REMOVED,
+
+        author: {
+          $ne: req.user._id,
+        },
+
+        ...(groupFilter
+          ? {
+              group: groupFilter,
+            }
+          : {}),
+      };
+
+      const crisisFilter = {
+        ...baseFilter,
+
+        "crisisFlag.isFlagged":
+          true,
+
+        "crisisFlag.handledAt":
+          null,
+      };
+
+      const oldestDate =
+        new Date(
+          Date.now() -
+            NEEDS_RESPONSE_MAX_AGE_DAYS *
+              24 *
+              60 *
+              60 *
+              1000
+        );
+
+      const unansweredFilter = {
+        ...baseFilter,
+
+        commentCount: 0,
+
+        createdAt: {
+          $gte: oldestDate,
+        },
+
+        $nor: [
+          {
+            "crisisFlag.isFlagged":
+              true,
+
+            "crisisFlag.handledAt":
+              null,
+          },
+        ],
+      };
+
+      const [
+        crisisPosts,
+        totalCrisisAlerts,
+        unansweredPosts,
+        totalUnanswered,
+      ] = await Promise.all([
+        populatePostAuthor(
+          Post.find(crisisFilter)
+            .sort({
+              "crisisFlag.flaggedAt":
+                -1,
+            })
+            .limit(
+              CRISIS_QUEUE_LIMIT
+            )
+        ),
+
+        Post.countDocuments(
+          crisisFilter
+        ),
+
+        populatePostAuthor(
+          Post.find(
+            unansweredFilter
+          )
+            .sort({
+              createdAt: 1,
+            })
+            .skip(skip)
+            .limit(limit)
+        ),
+
+        Post.countDocuments(
+          unansweredFilter
+        ),
+      ]);
+
+      const [
+        crisisAlerts,
+        unanswered,
+      ] = await Promise.all([
+        buildPostsWithGroupNames(
+          crisisPosts,
+          req.user
+        ),
+
+        buildPostsWithGroupNames(
+          unansweredPosts,
+          req.user
+        ),
+      ]);
+
+      const totalPages =
+        Math.max(
+          1,
+          Math.ceil(
+            totalUnanswered /
+              limit
+          )
+        );
+
+      return res
+        .status(200)
+        .json({
+          success: true,
+
+          message:
+            "Needs-response queue retrieved successfully",
+
+          data: {
+            crisisAlerts,
+            unanswered,
+
+            counts: {
+              crisisAlerts:
+                totalCrisisAlerts,
+
+              unanswered:
+                totalUnanswered,
+            },
+
+            maxAgeDays:
+              NEEDS_RESPONSE_MAX_AGE_DAYS,
+
+            pagination: {
+              page,
+              limit,
+
+              totalPosts:
+                totalUnanswered,
+
+              totalPages,
+
+              hasNextPage:
+                page < totalPages,
+
+              hasPreviousPage:
+                page > 1,
+            },
+          },
+        });
+    }
+  );
+
+/*
+|--------------------------------------------------------------------------
+| MARK CRISIS ALERT AS HANDLED
+|--------------------------------------------------------------------------
+*/
+
+export const markCrisisAlertHandled =
+  asyncHandler(
+    async (req, res) => {
+      const {
+        post,
+        group,
+      } =
+        await getPostWithGroupOrThrow(
+          req.params.postId
+        );
+
+      if (
+        !isGroupStaffOrAdmin(
+          req.user,
+          group
+        )
+      ) {
+        throw new AppError(
+          "You do not have permission to handle this crisis alert",
+          403
+        );
+      }
+
+      if (
+        !post.crisisFlag?.isFlagged
+      ) {
+        throw new AppError(
+          "This post does not have a crisis alert",
+          400
+        );
+      }
+
+      if (
+        !post.crisisFlag
+          .handledAt
+      ) {
+        post.crisisFlag.handledBy =
+          req.user._id;
+
+        post.crisisFlag.handledAt =
+          new Date();
+
+        await post.save();
+      }
+
+      return res
+        .status(200)
+        .json({
+          success: true,
+
+          message:
+            "Crisis alert marked as handled",
+
+          data: {
+            crisisFlag:
+              formatCrisisFlag(
+                post.crisisFlag
+              ),
+          },
+        });
+    }
+  );
+
+/*
+|--------------------------------------------------------------------------
+| MY FEED
+|--------------------------------------------------------------------------
+*/
+
+export const getMyFeed =
+  asyncHandler(
+    async (req, res) => {
+      const memberships =
+        await GroupMembership.find({
+          user: req.user._id,
+
+          status:
+            GROUP_MEMBERSHIP_STATUS.ACTIVE,
+        }).select("group");
+
+      const groupIds =
+        memberships.map(
+          (membership) =>
+            membership.group
+        );
+
+      const page =
+        Number(req.query.page) ||
+        1;
+
+      const limit =
+        Number(req.query.limit) ||
+        20;
+
+      const skip =
+        (page - 1) * limit;
+
+      const filter = {
+        group: {
+          $in: groupIds,
+        },
+
+        ...NOT_REMOVED,
+      };
+
+      const [
+        posts,
+        totalPosts,
+        groups,
+      ] = await Promise.all([
+        populatePostAuthor(
+          Post.find(filter)
+            .sort({
+              createdAt: -1,
+            })
+            .skip(skip)
+            .limit(limit)
+        ),
+
+        Post.countDocuments(
+          filter
+        ),
+
+        SupportGroup.find({
+          _id: {
+            $in: groupIds,
+          },
+        }),
+      ]);
+
+      const groupMap = new Map(
+        groups.map((group) => [
+          group._id.toString(),
+          group,
+        ])
+      );
+
+      const [
+        likes,
+        reactionMap,
+      ] = await Promise.all([
+        PostLike.find({
+          post: {
+            $in: posts.map(
+              (post) => post._id
+            ),
+          },
+
+          user: req.user._id,
         }),
 
-      pagination: {
-        page,
-        limit,
-        totalPosts,
-        totalPages,
-        hasNextPage: page < totalPages,
-        hasPreviousPage: page > 1,
-      },
-    },
-  });
-});
+        getPostReactionData(
+          posts,
+          req.user._id
+        ),
+      ]);
+
+      const likedPostIdSet =
+        new Set(
+          likes.map((like) =>
+            like.post.toString()
+          )
+        );
+
+      const totalPages =
+        Math.max(
+          1,
+          Math.ceil(
+            totalPosts / limit
+          )
+        );
+
+      return res
+        .status(200)
+        .json({
+          success: true,
+
+          message:
+            "Feed retrieved successfully",
+
+          data: {
+            posts: posts
+              .filter((post) =>
+                groupMap.has(
+                  post.group.toString()
+                )
+              )
+              .map((post) => {
+                const group =
+                  groupMap.get(
+                    post.group.toString()
+                  );
+
+                return {
+                  ...buildPostResponse(
+                    post,
+                    req.user,
+                    group,
+                    likedPostIdSet,
+                    reactionMap
+                  ),
+
+                  groupName:
+                    group.name,
+                };
+              }),
+
+            pagination: {
+              page,
+              limit,
+              totalPosts,
+              totalPages,
+
+              hasNextPage:
+                page < totalPages,
+
+              hasPreviousPage:
+                page > 1,
+            },
+          },
+        });
+    }
+  );
 
 /*
 |--------------------------------------------------------------------------
@@ -269,54 +1391,157 @@ export const getMyFeed = asyncHandler(async (req, res) => {
 |--------------------------------------------------------------------------
 */
 
-export const getGroupPosts = asyncHandler(async (req, res) => {
-  const group = await getActiveGroupOrThrow(req.params.groupId);
+export const getGroupPosts =
+  asyncHandler(
+    async (req, res) => {
+      const group =
+        await getActiveGroupOrThrow(
+          req.params.groupId
+        );
 
-  await assertCanAccessGroupContentOrThrow(group, req.user);
+      await assertCanAccessGroupContentOrThrow(
+        group,
+        req.user
+      );
 
-  const page = req.query.page || 1;
-  const limit = req.query.limit || 20;
-  const skip = (page - 1) * limit;
+      const page =
+        Number(req.query.page) ||
+        1;
 
-  const [posts, totalPosts] = await Promise.all([
-    populatePostAuthor(
-      Post.find({ group: group._id })
-        .sort({ isPinned: -1, createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-    ),
+      const limit =
+        Number(req.query.limit) ||
+        20;
 
-    Post.countDocuments({ group: group._id }),
-  ]);
+      const skip =
+        (page - 1) * limit;
 
-  const likes = await PostLike.find({
-    post: { $in: posts.map((post) => post._id) },
-    user: req.user._id,
-  });
+      const searchText =
+        req.query.q?.trim() ?? "";
 
-  const likedPostIdSet = new Set(likes.map((like) => like.post.toString()));
+      const isSearching =
+        searchText.length > 0;
 
-  const totalPages = Math.max(1, Math.ceil(totalPosts / limit));
+      const filter = {
+        group: group._id,
 
-  return res.status(200).json({
-    success: true,
-    message: "Posts retrieved successfully",
-    data: {
-      posts: posts.map((post) =>
-        buildPostResponse(post, req.user, group, likedPostIdSet)
-      ),
+        ...NOT_REMOVED,
+      };
 
-      pagination: {
-        page,
-        limit,
+      if (isSearching) {
+        filter.content = {
+          $regex:
+            escapeRegex(
+              searchText
+            ),
+
+          $options: "i",
+        };
+      }
+
+      const sortOption =
+        req.query.sort ||
+        POST_SORT.NEWEST;
+
+      if (
+        sortOption ===
+        POST_SORT.UNANSWERED
+      ) {
+        filter.commentCount = 0;
+      }
+
+      const sort =
+        buildPostSort(
+          sortOption,
+          isSearching
+        );
+
+      const [
+        posts,
         totalPosts,
-        totalPages,
-        hasNextPage: page < totalPages,
-        hasPreviousPage: page > 1,
-      },
-    },
-  });
-});
+      ] = await Promise.all([
+        populatePostAuthor(
+          Post.find(filter)
+            .sort(sort)
+            .skip(skip)
+            .limit(limit)
+        ),
+
+        Post.countDocuments(
+          filter
+        ),
+      ]);
+
+      const [
+        likes,
+        reactionMap,
+      ] = await Promise.all([
+        PostLike.find({
+          post: {
+            $in: posts.map(
+              (post) => post._id
+            ),
+          },
+
+          user: req.user._id,
+        }),
+
+        getPostReactionData(
+          posts,
+          req.user._id
+        ),
+      ]);
+
+      const likedPostIdSet =
+        new Set(
+          likes.map((like) =>
+            like.post.toString()
+          )
+        );
+
+      const totalPages =
+        Math.max(
+          1,
+          Math.ceil(
+            totalPosts / limit
+          )
+        );
+
+      return res
+        .status(200)
+        .json({
+          success: true,
+
+          message:
+            "Posts retrieved successfully",
+
+          data: {
+            posts:
+              posts.map((post) =>
+                buildPostResponse(
+                  post,
+                  req.user,
+                  group,
+                  likedPostIdSet,
+                  reactionMap
+                )
+              ),
+
+            pagination: {
+              page,
+              limit,
+              totalPosts,
+              totalPages,
+
+              hasNextPage:
+                page < totalPages,
+
+              hasPreviousPage:
+                page > 1,
+            },
+          },
+        });
+    }
+  );
 
 /*
 |--------------------------------------------------------------------------
@@ -324,26 +1549,92 @@ export const getGroupPosts = asyncHandler(async (req, res) => {
 |--------------------------------------------------------------------------
 */
 
-export const getPostById = asyncHandler(async (req, res) => {
-  const { post, group } = await getPostWithGroupOrThrow(req.params.postId);
+export const getPostById =
+  asyncHandler(
+    async (req, res) => {
+      const {
+        post,
+        group,
+      } =
+        await getPostWithGroupOrThrow(
+          req.params.postId,
+          {
+            allowRemoved: true,
+          }
+        );
 
-  await assertCanAccessGroupContentOrThrow(group, req.user);
+      await assertCanAccessGroupContentOrThrow(
+        group,
+        req.user
+      );
 
-  const existingLike = await PostLike.findOne({
-    post: post._id,
-    user: req.user._id,
-  });
+      const isStaff =
+        isGroupStaffOrAdmin(
+          req.user,
+          group
+        );
 
-  const likedPostIdSet = new Set(existingLike ? [post._id.toString()] : []);
+      if (
+        post.isRemoved &&
+        !isStaff
+      ) {
+        throw new AppError(
+          "Post was not found",
+          404
+        );
+      }
 
-  return res.status(200).json({
-    success: true,
-    message: "Post retrieved successfully",
-    data: {
-      post: buildPostResponse(post, req.user, group, likedPostIdSet),
-    },
-  });
-});
+      const existingLike =
+        await PostLike.findOne({
+          post: post._id,
+          user: req.user._id,
+        });
+
+      const likedPostIdSet =
+        new Set(
+          existingLike
+            ? [post._id.toString()]
+            : []
+        );
+
+      const reactionMap =
+        await getPostReactionData(
+          [post],
+          req.user._id
+        );
+
+      return res
+        .status(200)
+        .json({
+          success: true,
+
+          message:
+            "Post retrieved successfully",
+
+          data: {
+            post: {
+              ...buildPostResponse(
+                post,
+                req.user,
+                group,
+                likedPostIdSet,
+                reactionMap
+              ),
+
+              ...(post.isRemoved
+                ? {
+                    removedAt:
+                      post.removedAt,
+
+                    removalReason:
+                      post.removalReason,
+                  }
+                : {}),
+            },
+          },
+        });
+    }
+  );
 
 /*
 |--------------------------------------------------------------------------
@@ -351,53 +1642,125 @@ export const getPostById = asyncHandler(async (req, res) => {
 |--------------------------------------------------------------------------
 */
 
-export const deletePost = asyncHandler(async (req, res) => {
-  const { post, group } = await getPostWithGroupOrThrow(req.params.postId);
+export const deletePost =
+  asyncHandler(
+    async (req, res) => {
+      const {
+        post,
+        group,
+      } =
+        await getPostWithGroupOrThrow(
+          req.params.postId,
+          {
+            allowRemoved: true,
+          }
+        );
 
-  assertCanDeleteOrThrow(post.author._id, group, req.user);
+      assertCanDeleteOrThrow(
+        post.author._id,
+        group,
+        req.user
+      );
 
-  await Promise.all([
-    Post.deleteOne({ _id: post._id }),
-    PostComment.deleteMany({ post: post._id }),
-    PostLike.deleteMany({ post: post._id }),
-  ]);
+      await Promise.all([
+        Post.deleteOne({
+          _id: post._id,
+        }),
 
-  return res.status(200).json({
-    success: true,
-    message: "Post deleted successfully",
-    data: null,
-  });
-});
+        PostComment.deleteMany({
+          post: post._id,
+        }),
+
+        PostLike.deleteMany({
+          post: post._id,
+        }),
+
+        PostReaction.deleteMany({
+          post: post._id,
+        }),
+
+        CommentReaction.deleteMany({
+          comment: {
+            $in: await PostComment.find({
+              post: post._id,
+            }).distinct("_id"),
+          },
+        }),
+      ]);
+
+      return res
+        .status(200)
+        .json({
+          success: true,
+
+          message:
+            "Post deleted successfully",
+
+          data: null,
+        });
+    }
+  );
 
 /*
 |--------------------------------------------------------------------------
-| TOGGLE PIN
+| TOGGLE PIN / UNPIN
 |--------------------------------------------------------------------------
 */
 
-export const togglePostPin = asyncHandler(async (req, res) => {
-  const { post, group } = await getPostWithGroupOrThrow(req.params.postId);
+export const togglePostPin =
+  asyncHandler(
+    async (req, res) => {
+      const {
+        post,
+        group,
+      } =
+        await getPostWithGroupOrThrow(
+          req.params.postId
+        );
 
-  if (!isGroupStaffOrAdmin(req.user, group)) {
-    throw new AppError("You do not have permission to pin this post", 403);
-  }
+      if (
+        !isGroupStaffOrAdmin(
+          req.user,
+          group
+        )
+      ) {
+        throw new AppError(
+          "You do not have permission to pin this post",
+          403
+        );
+      }
 
-  const updatedPost = await Post.findByIdAndUpdate(
-    post._id,
-    { isPinned: !post.isPinned },
-    { new: true }
+      const updatedPost =
+        await Post.findByIdAndUpdate(
+          post._id,
+
+          {
+            isPinned:
+              !post.isPinned,
+          },
+
+          {
+            new: true,
+          }
+        );
+
+      return res
+        .status(200)
+        .json({
+          success: true,
+
+          message:
+            updatedPost.isPinned
+              ? "Post pinned successfully"
+              : "Post unpinned successfully",
+
+          data: {
+            isPinned:
+              updatedPost.isPinned,
+          },
+        });
+    }
   );
-
-  return res.status(200).json({
-    success: true,
-    message: updatedPost.isPinned
-      ? "Post pinned successfully"
-      : "Post unpinned successfully",
-    data: {
-      isPinned: updatedPost.isPinned,
-    },
-  });
-});
 
 /*
 |--------------------------------------------------------------------------
@@ -405,47 +1768,230 @@ export const togglePostPin = asyncHandler(async (req, res) => {
 |--------------------------------------------------------------------------
 */
 
-export const togglePostLike = asyncHandler(async (req, res) => {
-  const { post, group } = await getPostWithGroupOrThrow(req.params.postId);
+export const togglePostLike =
+  asyncHandler(
+    async (req, res) => {
+      const {
+        post,
+        group,
+      } =
+        await getPostWithGroupOrThrow(
+          req.params.postId
+        );
 
-  await assertCanPostOrThrow(group, req.user);
+      await assertCanPostOrThrow(
+        group,
+        req.user
+      );
 
-  const existingLike = await PostLike.findOne({
-    post: post._id,
-    user: req.user._id,
-  });
+      const existingLike =
+        await PostLike.findOne({
+          post: post._id,
+          user: req.user._id,
+        });
 
-  let liked;
+      let liked;
 
-  if (existingLike) {
-    await PostLike.deleteOne({ _id: existingLike._id });
-    await Post.findByIdAndUpdate(post._id, { $inc: { likeCount: -1 } });
-    liked = false;
-  } else {
-    try {
-      await PostLike.create({ post: post._id, user: req.user._id });
-      await Post.findByIdAndUpdate(post._id, { $inc: { likeCount: 1 } });
-      liked = true;
-    } catch (error) {
-      if (error?.code === 11000) {
-        liked = true;
+      if (existingLike) {
+        await PostLike.deleteOne({
+          _id: existingLike._id,
+        });
+
+        await Post.findByIdAndUpdate(
+          post._id,
+          {
+            $inc: {
+              likeCount: -1,
+            },
+          }
+        );
+
+        liked = false;
       } else {
-        throw error;
+        try {
+          await PostLike.create({
+            post: post._id,
+            user: req.user._id,
+          });
+
+          await Post.findByIdAndUpdate(
+            post._id,
+            {
+              $inc: {
+                likeCount: 1,
+              },
+            }
+          );
+
+          liked = true;
+        } catch (error) {
+          if (
+            error?.code === 11000
+          ) {
+            liked = true;
+          } else {
+            throw error;
+          }
+        }
       }
+
+      const updatedPost =
+        await Post.findById(
+          post._id
+        );
+
+      return res
+        .status(200)
+        .json({
+          success: true,
+
+          message: liked
+            ? "Post liked successfully"
+            : "Post unliked successfully",
+
+          data: {
+            liked,
+
+            likeCount:
+              updatedPost.likeCount,
+          },
+        });
     }
-  }
+  );
 
-  const updatedPost = await Post.findById(post._id);
+/*
+|--------------------------------------------------------------------------
+| TOGGLE POST REACTION
+|--------------------------------------------------------------------------
+*/
 
-  return res.status(200).json({
-    success: true,
-    message: liked ? "Post liked successfully" : "Post unliked successfully",
-    data: {
-      liked,
-      likeCount: updatedPost.likeCount,
-    },
-  });
-});
+export const togglePostReaction =
+  asyncHandler(
+    async (req, res) => {
+      const {
+        post,
+        group,
+      } =
+        await getPostWithGroupOrThrow(
+          req.params.postId
+        );
+
+      await assertCanPostOrThrow(
+        group,
+        req.user
+      );
+
+      const reactionType =
+        req.body.reactionType;
+
+      if (
+        !POST_REACTION_TYPES.includes(
+          reactionType
+        )
+      ) {
+        throw new AppError(
+          "Invalid reaction type",
+          400
+        );
+      }
+
+      const existingReaction =
+        await PostReaction.findOne({
+          post: post._id,
+          user: req.user._id,
+        });
+
+      if (
+        existingReaction &&
+        existingReaction.reactionType ===
+          reactionType
+      ) {
+        await PostReaction.deleteOne({
+          _id: existingReaction._id,
+        });
+
+        const reactionData =
+          await getPostReactionData(
+            [post],
+            req.user._id
+          );
+
+        return res
+          .status(200)
+          .json({
+            success: true,
+
+            message:
+              "Reaction removed successfully",
+
+            data: {
+              reaction: null,
+
+              ...reactionData.get(
+                post._id.toString()
+              ),
+            },
+          });
+      }
+
+      if (existingReaction) {
+        existingReaction.reactionType =
+          reactionType;
+
+        await existingReaction.save();
+      } else {
+        try {
+          await PostReaction.create({
+            post: post._id,
+            user: req.user._id,
+            reactionType,
+          });
+        } catch (error) {
+          if (
+            error?.code === 11000
+          ) {
+            const reaction =
+              await PostReaction.findOne({
+                post: post._id,
+                user: req.user._id,
+              });
+
+            if (reaction) {
+              reaction.reactionType =
+                reactionType;
+
+              await reaction.save();
+            }
+          } else {
+            throw error;
+          }
+        }
+      }
+
+      const reactionData =
+        await getPostReactionData(
+          [post],
+          req.user._id
+        );
+
+      return res
+        .status(200)
+        .json({
+          success: true,
+
+          message:
+            "Reaction updated successfully",
+
+          data: {
+            reaction: reactionType,
+
+            ...reactionData.get(
+              post._id.toString()
+            ),
+          },
+        });
+    }
+  );
 
 /*
 |--------------------------------------------------------------------------
@@ -453,28 +1999,91 @@ export const togglePostLike = asyncHandler(async (req, res) => {
 |--------------------------------------------------------------------------
 */
 
-export const getPostComments = asyncHandler(async (req, res) => {
-  const { post, group } = await getPostWithGroupOrThrow(req.params.postId);
+export const getPostComments =
+  asyncHandler(
+    async (req, res) => {
+      const {
+        post,
+        group,
+      } =
+        await getPostWithGroupOrThrow(
+          req.params.postId
+        );
 
-  await assertCanAccessGroupContentOrThrow(group, req.user);
+      await assertCanAccessGroupContentOrThrow(
+        group,
+        req.user
+      );
 
-  const comments = await populateCommentAuthor(
-    PostComment.find({ post: post._id }).sort({ createdAt: 1 })
+      const comments =
+        await populateCommentAuthor(
+          PostComment.find({
+            post: post._id,
+
+            ...NOT_REMOVED,
+          }).sort({
+            createdAt: 1,
+          })
+        );
+
+      const reactionMap =
+        await getCommentReactionData(
+          comments,
+          req.user._id
+        );
+
+      return res
+        .status(200)
+        .json({
+          success: true,
+
+          message:
+            "Comments retrieved successfully",
+
+          data: {
+            comments:
+              comments.map(
+                (comment) => {
+                  const reactionData =
+                    reactionMap.get(
+                      comment._id.toString()
+                    ) ?? {
+                      myReaction:
+                        null,
+
+                      reactionCounts: {
+                        like: 0,
+                        love: 0,
+                        haha: 0,
+                        wow: 0,
+                        sad: 0,
+                        angry: 0,
+                      },
+                    };
+
+                  return {
+                    ...comment.toSafeObject(),
+
+                    author:
+                      formatAuthorSummary(
+                        comment.author
+                      ),
+
+                    myReaction:
+                      reactionData.myReaction,
+
+                    reactionCounts:
+                      reactionData.reactionCounts,
+                  };
+                }
+              ),
+
+            totalComments:
+              comments.length,
+          },
+        });
+    }
   );
-
-  return res.status(200).json({
-    success: true,
-    message: "Comments retrieved successfully",
-    data: {
-      comments: comments.map((comment) => ({
-        ...comment.toSafeObject(),
-        author: formatAuthorSummary(comment.author),
-      })),
-
-      totalComments: comments.length,
-    },
-  });
-});
 
 /*
 |--------------------------------------------------------------------------
@@ -482,35 +2091,68 @@ export const getPostComments = asyncHandler(async (req, res) => {
 |--------------------------------------------------------------------------
 */
 
-export const createComment = asyncHandler(async (req, res) => {
-  const { post, group } = await getPostWithGroupOrThrow(req.params.postId);
+export const createComment =
+  asyncHandler(
+    async (req, res) => {
+      const {
+        post,
+        group,
+      } =
+        await getPostWithGroupOrThrow(
+          req.params.postId
+        );
 
-  await assertCanPostOrThrow(group, req.user);
+      await assertCanPostOrThrow(
+        group,
+        req.user
+      );
 
-  const comment = await PostComment.create({
-    post: post._id,
-    group: group._id,
-    author: req.user._id,
-    content: req.body.content.trim(),
-  });
+      const comment =
+        await PostComment.create({
+          post: post._id,
+          group: group._id,
+          author: req.user._id,
+          content:
+            req.body.content.trim(),
+        });
 
-  await Post.findByIdAndUpdate(post._id, { $inc: { commentCount: 1 } });
+      await Post.findByIdAndUpdate(
+        post._id,
+        {
+          $inc: {
+            commentCount: 1,
+          },
+        }
+      );
 
-  const populatedComment = await populateCommentAuthor(
-    PostComment.findById(comment._id)
+      const populatedComment =
+        await populateCommentAuthor(
+          PostComment.findById(
+            comment._id
+          )
+        );
+
+      return res
+        .status(201)
+        .json({
+          success: true,
+
+          message:
+            "Comment added successfully",
+
+          data: {
+            comment: {
+              ...populatedComment.toSafeObject(),
+
+              author:
+                formatAuthorSummary(
+                  populatedComment.author
+                ),
+            },
+          },
+        });
+    }
   );
-
-  return res.status(201).json({
-    success: true,
-    message: "Comment added successfully",
-    data: {
-      comment: {
-        ...populatedComment.toSafeObject(),
-        author: formatAuthorSummary(populatedComment.author),
-      },
-    },
-  });
-});
 
 /*
 |--------------------------------------------------------------------------
@@ -518,20 +2160,49 @@ export const createComment = asyncHandler(async (req, res) => {
 |--------------------------------------------------------------------------
 */
 
-export const deleteComment = asyncHandler(async (req, res) => {
-  const { comment, group } = await getCommentWithGroupOrThrow(
-    req.params.commentId
+export const deleteComment =
+  asyncHandler(
+    async (req, res) => {
+      const {
+        comment,
+        group,
+      } =
+        await getCommentWithGroupOrThrow(
+          req.params.commentId
+        );
+
+      assertCanDeleteOrThrow(
+        comment.author,
+        group,
+        req.user
+      );
+
+      await PostComment.deleteOne({
+        _id: comment._id,
+      });
+
+      await CommentReaction.deleteMany({
+        comment: comment._id,
+      });
+
+      await Post.findByIdAndUpdate(
+        comment.post,
+        {
+          $inc: {
+            commentCount: -1,
+          },
+        }
+      );
+
+      return res
+        .status(200)
+        .json({
+          success: true,
+
+          message:
+            "Comment deleted successfully",
+
+          data: null,
+        });
+    }
   );
-
-  assertCanDeleteOrThrow(comment.author, group, req.user);
-
-  await PostComment.deleteOne({ _id: comment._id });
-
-  await Post.findByIdAndUpdate(comment.post, { $inc: { commentCount: -1 } });
-
-  return res.status(200).json({
-    success: true,
-    message: "Comment deleted successfully",
-    data: null,
-  });
-});
