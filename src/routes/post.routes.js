@@ -6,20 +6,11 @@ import {
   getGroupPosts,
   getMyFeed,
   getPostById,
-  getPostComments,
   markCrisisAlertHandled,
   togglePostLike,
   togglePostPin,
   togglePostReaction,
 } from "../controllers/post.controller.js";
-
-import {
-  createComment,
-  updateComment,
-  deleteComment,
-  createReply,
-  toggleCommentHeart,
-} from "../controllers/comment.controller.js";
 
 import { USER_ROLES } from "../constants/auth.constants.js";
 
@@ -36,11 +27,6 @@ import {
   listPostsValidator,
   postIdParamValidator,
 } from "../validators/post.validator.js";
-
-import {
-  createCommentValidator,
-  commentIdParamValidator,
-} from "../validators/comment.validator.js";
 
 const router = express.Router();
 
@@ -159,78 +145,6 @@ router.post(
   postIdParamValidator,
   validateRequest,
   togglePostPin
-);
-
-/*
-|--------------------------------------------------------------------------
-| COMMENTS
-|--------------------------------------------------------------------------
-*/
-
-/*
- * Get all comments for a post
- */
-
-router.get(
-  "/posts/:postId/comments",
-  postIdParamValidator,
-  validateRequest,
-  getPostComments
-);
-
-/*
- * Create a new comment
- */
-
-router.post(
-  "/posts/:postId/comments",
-  createCommentValidator,
-  validateRequest,
-  createComment
-);
-
-/*
- * Update an existing comment
- */
-
-router.patch(
-  "/comments/:commentId",
-  commentIdParamValidator,
-  validateRequest,
-  updateComment
-);
-
-/*
- * Delete a comment
- */
-
-router.delete(
-  "/comments/:commentId",
-  commentIdParamValidator,
-  validateRequest,
-  deleteComment
-);
-
-/*
- * Reply to a comment
- */
-
-router.post(
-  "/comments/:commentId/replies",
-  commentIdParamValidator,
-  validateRequest,
-  createReply
-);
-
-/*
- * Heart / unheart a comment
- */
-
-router.post(
-  "/comments/:commentId/heart",
-  commentIdParamValidator,
-  validateRequest,
-  toggleCommentHeart
 );
 
 /*

@@ -12,11 +12,6 @@ import {
 } from "../constants/group.constants.js";
 
 import {
-  notifyCommentReply,
-  notifyPostComment,
-} from "../services/notification.service.js";
-
-import {
   uploadCommentMediaToCloudinary,
   deleteCommentMediaFromCloudinary,
 } from "../services/commentMedia.service.js";
@@ -435,12 +430,6 @@ export const createComment =
         }
       );
 
-      void notifyPostComment({
-        post,
-        comment,
-        actorId: req.user._id,
-      });
-
       const populatedComment =
         await populateCommentAuthor(
           PostComment.findById(
@@ -770,13 +759,6 @@ export const createReply =
           },
         }
       );
-
-      void notifyCommentReply({
-        post,
-        parentComment,
-        reply,
-        actorId: req.user._id,
-      });
 
       const populatedReply =
         await populateCommentAuthor(
