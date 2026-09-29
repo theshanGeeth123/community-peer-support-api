@@ -1060,3 +1060,57 @@ export const toggleCommentReaction =
       },
     });
   });
+
+/*
+|--------------------------------------------------------------------------
+| TOGGLE COMMENT PIN
+|--------------------------------------------------------------------------
+|
+| A user can pin/unpin their own comment.
+|
+| true  = pinned
+| false = unpinned
+|
+| Users cannot pin or unpin another user's comment.
+|
+|--------------------------------------------------------------------------
+*/
+
+export const toggleCommentPin =
+  asyncHandler(async (req, res) => {
+    const { comment, group } =
+      await getCommentWithGroupOrThrow(
+        req.params.commentId
+      );
+
+    await assertCanEngageOrThrow(
+      group,
+      req.user
+    );
+
+    const isCommentAuthor =
+      comment.author.toString() ===
+      req.user._id.toString();
+
+    if (!isCommentAuthor) {
+      throw new AppError(
+        "You can only pin or unpin your own comment",
+        403
+      );
+    }
+
+    comment.isPinned =
+      !comment.isPinned;
+
+    await comment.save();
+
+    return res.status(200).json({
+      success: true,
+      message: comment.isPinned
+        ? "Comment pinned successfully"
+        : "Comment unpinned successfully",
+      data: {
+        isPinned: comment.isPinned,
+      },
+    });
+  });
