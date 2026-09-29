@@ -74,6 +74,21 @@ const postCommentSchema = new mongoose.Schema(
     },
 
     /*
+    |--------------------------------------------------------------------------
+    | COMMENT PIN
+    |--------------------------------------------------------------------------
+    |
+    | true = comment is pinned
+    | false = comment is not pinned
+    |
+    */
+
+    isPinned: {
+      type: Boolean,
+      default: false,
+    },
+
+    /*
      * Set when a moderator removes the comment through a report.
      * Hidden from members, kept for Moderation History.
      */
@@ -131,6 +146,9 @@ postCommentSchema.methods.toSafeObject = function () {
 
     // Cloudinary media
     media: this.media,
+
+    // Comment pin status
+    isPinned: this.isPinned,
 
     parentComment: this.parentComment,
     createdAt: this.createdAt,

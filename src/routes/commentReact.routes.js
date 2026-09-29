@@ -11,6 +11,7 @@ import {
   createReply,
   toggleCommentHeart,
   toggleCommentReaction,
+  toggleCommentPin,
 } from "../controllers/postEngagement.controller.js";
 
 import { authenticate } from "../middleware/auth.middleware.js";
@@ -289,6 +290,19 @@ router.post(
   commentIdParamValidator,
   validateRequest,
   toggleCommentReaction
+);
+
+/*
+ * Pin / unpin own comment
+ *
+ * A user can only pin or unpin
+ * their own comment.
+ */
+router.patch(
+  "/comments/:commentId/pin",
+  commentIdParamValidator,
+  validateRequest,
+  toggleCommentPin
 );
 
 export default router;
