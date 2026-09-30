@@ -1,7 +1,11 @@
 ﻿import ModerationAction from "../models/ModerationAction.js";
+import Post from "../models/Post.js";
 import Report from "../models/Report.js";
 
-import { REPORT_STATUS } from "../constants/moderation.constants.js";
+import {
+  MODERATION_ACTION_TYPE,
+  REPORT_STATUS,
+} from "../constants/moderation.constants.js";
 
 import AppError from "../utils/AppError.js";
 import asyncHandler from "../utils/asyncHandler.js";
@@ -152,7 +156,8 @@ export const reviewReport = asyncHandler(async (req, res) => {
   report.reviewedBy = req.user._id;
   report.reviewedAt = now;
 
-  const [updatedReport, moderationAction] = await Promise.all([
+  // Build the list of concurrent operations
+  const ops = [
     report.save({ validateBeforeSave: false }),
 
     ModerationAction.create({
@@ -164,7 +169,19 @@ export const reviewReport = asyncHandler(async (req, res) => {
       action,
       reason,
     }),
-  ]);
+  ];
+
+  // If the moderator chose to remove the content, delete the reported post.
+  // We do this inside the same Promise.all so it runs in parallel and any
+  // failure surfaces immediately — keeping the review atomic.
+  if (
+    action === MODERATION_ACTION_TYPE.REMOVE &&
+    report.targetType === "POST"
+  ) {
+    ops.push(Post.findByIdAndDelete(report.targetId));
+  }
+
+  const [updatedReport, moderationAction] = await Promise.all(ops);
 
   const populatedReport = await updatedReport.populate([
     { path: "reporter", select: "fullName email avatarUrl" },
