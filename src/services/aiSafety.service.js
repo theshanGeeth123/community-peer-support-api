@@ -1,15 +1,20 @@
-import {
-  GoogleGenAI,
-  HarmBlockThreshold,
-  HarmCategory,
-  Type,
-} from "@google/genai";
+import { Type } from "@google/genai";
 
 import {
   AI_MOOD,
   AI_RISK_LEVEL,
   CONTENT_WARNING,
+  POST_LANGUAGE,
 } from "../constants/post.constants.js";
+
+import {
+  classifyGeminiError,
+  getGeminiClient,
+  getGeminiModel,
+  isGeminiConfigured,
+  isGeminiPaused,
+  POST_TEXT_SAFETY_SETTINGS,
+} from "./geminiClient.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -30,39 +35,12 @@ import {
 |
 */
 
-const DEFAULT_MODEL = "gemini-3.5-flash-lite";
 const DEFAULT_TIMEOUT_MS = 12000;
 const MAX_REASON_LENGTH = 200;
 
-/*
- * After a rate-limit or auth error, stop calling Gemini for a while
- * instead of failing on every post (free tier has per-minute and
- * per-day limits).
- */
-const RATE_LIMIT_PAUSE_MS = 60 * 1000;
-const AUTH_ERROR_PAUSE_MS = 10 * 60 * 1000;
-
-let geminiClient = null;
-let pausedUntil = 0;
-
-const getApiKey = () => process.env.GEMINI_API_KEY?.trim() || null;
-
-const getModel = () =>
-  process.env.GEMINI_SAFETY_MODEL?.trim() ||
-  process.env.GEMINI_MODEL?.trim() ||
-  DEFAULT_MODEL;
-
 export const isAiSafetyEnabled = () =>
   process.env.AI_SAFETY_ENABLED?.trim().toLowerCase() !== "false" &&
-  Boolean(getApiKey());
-
-const getGeminiClient = () => {
-  if (!geminiClient) {
-    geminiClient = new GoogleGenAI({ apiKey: getApiKey() });
-  }
-
-  return geminiClient;
-};
+  isGeminiConfigured();
 
 const SYSTEM_INSTRUCTION = `
 You are a safety classifier for a mental-health peer-support community in Sri Lanka.
@@ -87,6 +65,13 @@ contentWarnings — sensitive topics the post discusses in a way that could upse
 Use only values from the allowed list. Use an empty list if none apply.
 
 mood — the overall emotional tone of the post.
+
+language — the language the post is mainly written in:
+- EN: English.
+- SI: Sinhala written in Sinhala script.
+- TA: Tamil written in Tamil script.
+- SI_LATN: Sinhala typed in English letters ("mata godak dukai", "oyata kohomada").
+- OTHER: anything else, or too mixed to tell.
 
 reason — one short, factual sentence (max 25 words) for a human moderator explaining the
 riskLevel. Do not quote the post at length. Do not include names.
@@ -117,24 +102,13 @@ const RESPONSE_SCHEMA = {
     reason: {
       type: Type.STRING,
     },
+    language: {
+      type: Type.STRING,
+      enum: Object.values(POST_LANGUAGE),
+    },
   },
-  required: ["riskLevel", "contentWarnings", "mood", "reason"],
+  required: ["riskLevel", "contentWarnings", "mood", "reason", "language"],
 };
-
-/*
- * This call classifies text; it does not generate harmful content.
- * Gemini's default filters would block the very posts that most need
- * to be read, so they are relaxed for this request only.
- */
-const SAFETY_SETTINGS = [
-  HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-  HarmCategory.HARM_CATEGORY_HARASSMENT,
-  HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-  HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-].map((category) => ({
-  category,
-  threshold: HarmBlockThreshold.BLOCK_NONE,
-}));
 
 const skipped = (reason) => ({ status: "SKIPPED", error: reason });
 const failed = (reason) => ({ status: "FAILED", error: reason });
@@ -185,18 +159,17 @@ const parseModelAnswer = (rawText) => {
       ? parsed.reason.replace(/\s+/g, " ").trim().slice(0, MAX_REASON_LENGTH)
       : "";
 
+  const language = Object.values(POST_LANGUAGE).includes(parsed.language)
+    ? parsed.language
+    : null;
+
   return {
     riskLevel: parsed.riskLevel,
     contentWarnings,
     mood,
     reason: reason || null,
+    language,
   };
-};
-
-const getUpstreamStatus = (error) => {
-  const value = Number(error?.status || error?.statusCode);
-
-  return Number.isFinite(value) ? value : null;
 };
 
 /**
@@ -208,7 +181,8 @@ const getUpstreamStatus = (error) => {
  * @param {object} [options.client]  Gemini client override (tests).
  * @returns {Promise<
  *   | { status: "DONE", riskLevel: string, contentWarnings: string[],
- *       mood: string | null, reason: string | null, model: string }
+ *       mood: string | null, reason: string | null,
+ *       language: string | null, model: string }
  *   | { status: "SKIPPED" | "FAILED", error: string }
  * >}
  */
@@ -223,11 +197,11 @@ export const analyzePostSafety = async (text, options = {}) => {
     return skipped("empty_text");
   }
 
-  if (!client && Date.now() < pausedUntil) {
+  if (!client && isGeminiPaused()) {
     return skipped("paused_after_upstream_error");
   }
 
-  const model = getModel();
+  const model = getGeminiModel("GEMINI_SAFETY_MODEL");
   const abortController = new AbortController();
   const timeout = setTimeout(() => abortController.abort(), timeoutMs);
 
@@ -248,7 +222,7 @@ export const analyzePostSafety = async (text, options = {}) => {
         systemInstruction: SYSTEM_INSTRUCTION,
         responseMimeType: "application/json",
         responseSchema: RESPONSE_SCHEMA,
-        safetySettings: SAFETY_SETTINGS,
+        safetySettings: POST_TEXT_SAFETY_SETTINGS,
 
         /*
          * Same post → same answer.
@@ -279,27 +253,7 @@ export const analyzePostSafety = async (text, options = {}) => {
       return failed("timeout");
     }
 
-    const upstreamStatus = getUpstreamStatus(error);
-
-    if (upstreamStatus === 429) {
-      pausedUntil = Date.now() + RATE_LIMIT_PAUSE_MS;
-      return failed("rate_limited");
-    }
-
-    if (upstreamStatus === 401 || upstreamStatus === 403) {
-      pausedUntil = Date.now() + AUTH_ERROR_PAUSE_MS;
-      console.error(
-        "[ai safety] Gemini rejected the API key. Check GEMINI_API_KEY."
-      );
-      return failed("auth_error");
-    }
-
-    console.error(
-      "[ai safety] Gemini request failed:",
-      error?.message ?? error
-    );
-
-    return failed("upstream_error");
+    return failed(classifyGeminiError(error, "ai safety"));
   } finally {
     clearTimeout(timeout);
   }

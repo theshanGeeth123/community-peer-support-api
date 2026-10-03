@@ -6,6 +6,8 @@ import {
   AI_SAFETY_STATUS,
   CONTENT_WARNING,
   CRISIS_FLAG_SOURCE,
+  POST_LANGUAGE,
+  TRANSLATION_LANGUAGE,
 } from "../constants/post.constants.js";
 
 const postSchema = new mongoose.Schema(
@@ -162,6 +164,55 @@ const postSchema = new mongoose.Schema(
         enum: [...Object.values(CRISIS_FLAG_SOURCE), null],
         default: null,
       },
+    },
+
+    /*
+    |--------------------------------------------------------------------------
+    | LANGUAGE & TRANSLATIONS
+    |--------------------------------------------------------------------------
+    |
+    | language     → what the post is written in. Set from its alphabet
+    |                when created, then refined by the AI check (which can
+    |                also recognise Sinhala typed in English letters).
+    | translations → AI translations, saved the first time someone asks
+    |                for that language and reused for everyone after.
+    |
+    */
+
+    language: {
+      type: String,
+      enum: [...Object.values(POST_LANGUAGE), null],
+      default: null,
+    },
+
+    translations: {
+      type: [
+        {
+          _id: false,
+
+          language: {
+            type: String,
+            enum: Object.values(TRANSLATION_LANGUAGE),
+            required: true,
+          },
+
+          content: {
+            type: String,
+            required: true,
+          },
+
+          model: {
+            type: String,
+            default: null,
+          },
+
+          translatedAt: {
+            type: Date,
+            default: Date.now,
+          },
+        },
+      ],
+      default: [],
     },
 
     /*

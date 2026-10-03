@@ -57,6 +57,13 @@ const applyAiResult = async (postId, result) => {
     "aiSafety.suggestedWarnings": result.contentWarnings,
     "aiSafety.model": result.model,
     "aiSafety.checkedAt": checkedAt,
+
+    /*
+     * The AI also reports the post's language. It is more accurate
+     * than the alphabet check (it recognises Sinhala typed in English
+     * letters), so it replaces that when present.
+     */
+    ...(result.language ? { language: result.language } : {}),
   };
 
   const isCrisis = CRISIS_RISK_LEVELS.has(result.riskLevel);

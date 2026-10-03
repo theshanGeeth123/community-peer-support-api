@@ -47,6 +47,33 @@ export const CRISIS_FLAG_SOURCE = Object.freeze({
   BOTH: "BOTH",
 });
 
+/*
+ * The language a post is written in.
+ * SI_LATN = Sinhala typed in English letters ("mata godak dukai").
+ */
+export const POST_LANGUAGE = Object.freeze({
+  EN: "EN",
+  SI: "SI",
+  TA: "TA",
+  SI_LATN: "SI_LATN",
+  OTHER: "OTHER",
+});
+
+/*
+ * Languages a post can be translated into.
+ */
+export const TRANSLATION_LANGUAGE = Object.freeze({
+  EN: "EN",
+  SI: "SI",
+  TA: "TA",
+});
+
+export const TRANSLATION_LANGUAGE_NAMES = Object.freeze({
+  EN: "English",
+  SI: "Sinhala (සිංහල script)",
+  TA: "Tamil (தமிழ் script)",
+});
+
 export const CONTENT_WARNING = Object.freeze({
   SUICIDE_SELF_HARM: "SUICIDE_SELF_HARM",
   EATING_DISORDERS: "EATING_DISORDERS",
