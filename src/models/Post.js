@@ -1,6 +1,12 @@
 import mongoose from "mongoose";
 
-import { CONTENT_WARNING } from "../constants/post.constants.js";
+import {
+  AI_MOOD,
+  AI_RISK_LEVEL,
+  AI_SAFETY_STATUS,
+  CONTENT_WARNING,
+  CRISIS_FLAG_SOURCE,
+} from "../constants/post.constants.js";
 
 const postSchema = new mongoose.Schema(
   {
@@ -143,6 +149,76 @@ const postSchema = new mongoose.Schema(
       },
 
       handledAt: {
+        type: Date,
+        default: null,
+      },
+
+      /*
+       * What raised the flag: keyword matching, the AI check, or both.
+       * null on posts flagged before the AI check existed.
+       */
+      source: {
+        type: String,
+        enum: [...Object.values(CRISIS_FLAG_SOURCE), null],
+        default: null,
+      },
+    },
+
+    /*
+    |--------------------------------------------------------------------------
+    | AI SAFETY CHECK (Gemini)
+    |--------------------------------------------------------------------------
+    |
+    | Result of the AI review of this post. Visible to group staff only.
+    | status PENDING → the check is still running in the background.
+    | FAILED / SKIPPED → no AI result; keyword detection still applied.
+    |
+    */
+
+    aiSafety: {
+      status: {
+        type: String,
+        enum: Object.values(AI_SAFETY_STATUS),
+        default: AI_SAFETY_STATUS.SKIPPED,
+      },
+
+      riskLevel: {
+        type: String,
+        enum: [...Object.values(AI_RISK_LEVEL), null],
+        default: null,
+      },
+
+      /*
+       * Numeric rank of riskLevel, for "most serious first" sorting.
+       */
+      riskScore: {
+        type: Number,
+        default: 0,
+      },
+
+      mood: {
+        type: String,
+        enum: [...Object.values(AI_MOOD), null],
+        default: null,
+      },
+
+      reason: {
+        type: String,
+        trim: true,
+        default: null,
+      },
+
+      suggestedWarnings: {
+        type: [String],
+        default: [],
+      },
+
+      model: {
+        type: String,
+        default: null,
+      },
+
+      checkedAt: {
         type: Date,
         default: null,
       },

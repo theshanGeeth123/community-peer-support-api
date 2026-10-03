@@ -11,9 +11,19 @@ import {
   GROUP_STATUS,
   GROUP_MEMBERSHIP_STATUS,
 } from "../constants/group.constants.js";
-import { CONTENT_WARNING, POST_SORT } from "../constants/post.constants.js";
+import {
+  AI_SAFETY_STATUS,
+  CONTENT_WARNING,
+  CRISIS_FLAG_SOURCE,
+  POST_SORT,
+} from "../constants/post.constants.js";
 
+import { isAiSafetyEnabled } from "../services/aiSafety.service.js";
 import { detectCrisisContent } from "../services/contentSafety.service.js";
+import {
+  reviewPostWithAi,
+  waitUpTo,
+} from "../services/postSafetyReview.service.js";
 import { NOT_REMOVED } from "../services/moderationRemoval.service.js";
 import {
   deletePostImageFromCloudinary,
@@ -315,16 +325,53 @@ const redactPostAuthor = (
   return ANONYMOUS_AUTHOR;
 };
 
-const formatCrisisFlag = (crisisFlag) => ({
-  isFlagged: true,
-  matchedTerms: crisisFlag.matchedTerms,
-  flaggedAt: crisisFlag.flaggedAt,
-  isHandled: Boolean(crisisFlag.handledAt),
-  handledBy: crisisFlag.handledBy
-    ? crisisFlag.handledBy.toString()
-    : null,
-  handledAt: crisisFlag.handledAt,
-});
+/*
+ * How long createPost waits for the AI safety check before replying.
+ * Usually the check finishes in time, so the author can be shown
+ * support resources straight away. If it is slower, the reply goes out
+ * anyway and the check finishes in the background.
+ */
+const AI_SAFETY_INLINE_WAIT_MS =
+  Number(process.env.AI_SAFETY_INLINE_WAIT_MS) || 2500;
+
+/*
+ * The AI's view of the post, for staff. null when there is no AI
+ * result (still running, failed, or AI not configured).
+ */
+const formatAiAssessment = (aiSafety) => {
+  if (aiSafety?.status !== AI_SAFETY_STATUS.DONE) {
+    return null;
+  }
+
+  return {
+    riskLevel: aiSafety.riskLevel,
+    reason: aiSafety.reason,
+    mood: aiSafety.mood,
+    checkedAt: aiSafety.checkedAt,
+  };
+};
+
+const formatCrisisFlag = (post) => {
+  const { crisisFlag } = post;
+
+  return {
+    isFlagged: true,
+    matchedTerms: crisisFlag.matchedTerms,
+    flaggedAt: crisisFlag.flaggedAt,
+    isHandled: Boolean(crisisFlag.handledAt),
+    handledBy: crisisFlag.handledBy
+      ? crisisFlag.handledBy.toString()
+      : null,
+    handledAt: crisisFlag.handledAt,
+
+    /*
+     * KEYWORD | AI | BOTH — null on posts flagged before the AI check.
+     */
+    source: crisisFlag.source ?? null,
+    aiStatus: post.aiSafety?.status ?? null,
+    ai: formatAiAssessment(post.aiSafety),
+  };
+};
 
 const buildCrisisFlagForViewer = (
   post,
@@ -341,9 +388,7 @@ const buildCrisisFlagForViewer = (
     return null;
   }
 
-  return formatCrisisFlag(
-    post.crisisFlag
-  );
+  return formatCrisisFlag(post);
 };
 
 const getStaffGroupIds = async (user) => {
@@ -673,8 +718,15 @@ export const createPost = asyncHandler(
                 matchedTerms:
                   crisisCheck.matchedTerms,
                 flaggedAt: new Date(),
+                source:
+                  CRISIS_FLAG_SOURCE.KEYWORD,
               }
             : undefined,
+        aiSafety: {
+          status: isAiSafetyEnabled()
+            ? AI_SAFETY_STATUS.PENDING
+            : AI_SAFETY_STATUS.SKIPPED,
+        },
       });
     } catch (error) {
       await deletePostImageFromCloudinary(
@@ -683,6 +735,17 @@ export const createPost = asyncHandler(
 
       throw error;
     }
+
+    /*
+     * AI safety check. Only the post text is sent. It never fails the
+     * request: on any problem the keyword result above still stands.
+     * We wait briefly so the author can be shown support resources
+     * right away; a slower check finishes in the background.
+     */
+    const aiOutcome = await waitUpTo(
+      reviewPostWithAi(post),
+      AI_SAFETY_INLINE_WAIT_MS
+    );
 
     const populatedPost =
       await populatePostAuthor(
@@ -702,7 +765,8 @@ export const createPost = asyncHandler(
         ),
         safety: {
           crisisDetected:
-            crisisCheck.isCrisis,
+            crisisCheck.isCrisis ||
+            Boolean(aiOutcome?.isCrisis),
         },
       },
     });
@@ -849,6 +913,7 @@ export const getCrisisAlerts =
         populatePostAuthor(
           Post.find(filter)
             .sort({
+              "aiSafety.riskScore": -1,
               "crisisFlag.flaggedAt":
                 -1,
             })
@@ -983,6 +1048,7 @@ export const getNeedsResponseQueue =
         populatePostAuthor(
           Post.find(crisisFilter)
             .sort({
+              "aiSafety.riskScore": -1,
               "crisisFlag.flaggedAt":
                 -1,
             })
@@ -1125,9 +1191,7 @@ export const markCrisisAlertHandled =
             "Crisis alert marked as handled",
           data: {
             crisisFlag:
-              formatCrisisFlag(
-                post.crisisFlag
-              ),
+              formatCrisisFlag(post),
           },
         });
     }
