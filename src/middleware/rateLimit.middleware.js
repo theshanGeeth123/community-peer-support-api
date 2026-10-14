@@ -223,3 +223,25 @@ export const chatbotLimiter =
         "Too many chatbot messages. Please wait a few minutes and try again."
       ),
   });
+
+export const commentSuggestionLimiter =
+  rateLimit({
+    windowMs:
+      15 * 60 * 1000,
+
+    limit:
+      isDevelopment
+        ? 100
+        : 20,
+
+    standardHeaders:
+      true,
+
+    legacyHeaders:
+      false,
+
+    message:
+      createRateLimitResponse(
+        "Too many AI suggestion requests. Please wait a few minutes and try again."
+      ),
+  });
