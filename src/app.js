@@ -14,6 +14,7 @@ import globalPostRoutes from "./routes/globalPost.routes.js";
 import reportRoutes from "./routes/report.routes.js";
 import chatbotRoutes from "./routes/chatbot.routes.js";
 import notificationRoutes from "./routes/notification.routes.js";
+import commentSuggestionRoutes from "./routes/commentSuggestion.routes.js";
 
 import {
   globalErrorHandler,
@@ -139,6 +140,11 @@ app.use(
 app.use(
   "/api/v1",
   commentReactRoutes
+);
+
+app.use(
+  "/api/v1",
+  commentSuggestionRoutes
 );
 
 app.use(

@@ -2,11 +2,6 @@
 node_modules/
 
 # Environment variables and secrets
-.env
-.env.local
-.env.development
-.env.production
-.env.test
 
 # Keep environment variable template
 !.env.example
@@ -40,7 +35,6 @@ uploads/
 Thumbs.db
 
 # IDE and editor settings
-.vscode/
 .idea/
 *.code-workspace
 
@@ -52,3 +46,4 @@ pids/
 # Testing cache
 .jest/
 .cache/
+config.bat
