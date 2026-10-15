@@ -11,9 +11,26 @@ import {
   GROUP_STATUS,
   GROUP_MEMBERSHIP_STATUS,
 } from "../constants/group.constants.js";
-import { CONTENT_WARNING, POST_SORT } from "../constants/post.constants.js";
+import {
+  AI_SAFETY_STATUS,
+  CONTENT_WARNING,
+  CRISIS_FLAG_SOURCE,
+  POST_LANGUAGE,
+  POST_SORT,
+  TRANSLATION_LANGUAGE,
+} from "../constants/post.constants.js";
 
+import { isAiSafetyEnabled } from "../services/aiSafety.service.js";
 import { detectCrisisContent } from "../services/contentSafety.service.js";
+import {
+  reviewPostWithAi,
+  waitUpTo,
+} from "../services/postSafetyReview.service.js";
+import { detectLanguageByScript } from "../services/postLanguage.service.js";
+import {
+  findSavedTranslation,
+  getOrCreatePostTranslation,
+} from "../services/postTranslation.service.js";
 import { NOT_REMOVED } from "../services/moderationRemoval.service.js";
 import {
   deletePostImageFromCloudinary,
@@ -315,16 +332,53 @@ const redactPostAuthor = (
   return ANONYMOUS_AUTHOR;
 };
 
-const formatCrisisFlag = (crisisFlag) => ({
-  isFlagged: true,
-  matchedTerms: crisisFlag.matchedTerms,
-  flaggedAt: crisisFlag.flaggedAt,
-  isHandled: Boolean(crisisFlag.handledAt),
-  handledBy: crisisFlag.handledBy
-    ? crisisFlag.handledBy.toString()
-    : null,
-  handledAt: crisisFlag.handledAt,
-});
+/*
+ * How long createPost waits for the AI safety check before replying.
+ * Usually the check finishes in time, so the author can be shown
+ * support resources straight away. If it is slower, the reply goes out
+ * anyway and the check finishes in the background.
+ */
+const AI_SAFETY_INLINE_WAIT_MS =
+  Number(process.env.AI_SAFETY_INLINE_WAIT_MS) || 2500;
+
+/*
+ * The AI's view of the post, for staff. null when there is no AI
+ * result (still running, failed, or AI not configured).
+ */
+const formatAiAssessment = (aiSafety) => {
+  if (aiSafety?.status !== AI_SAFETY_STATUS.DONE) {
+    return null;
+  }
+
+  return {
+    riskLevel: aiSafety.riskLevel,
+    reason: aiSafety.reason,
+    mood: aiSafety.mood,
+    checkedAt: aiSafety.checkedAt,
+  };
+};
+
+const formatCrisisFlag = (post) => {
+  const { crisisFlag } = post;
+
+  return {
+    isFlagged: true,
+    matchedTerms: crisisFlag.matchedTerms,
+    flaggedAt: crisisFlag.flaggedAt,
+    isHandled: Boolean(crisisFlag.handledAt),
+    handledBy: crisisFlag.handledBy
+      ? crisisFlag.handledBy.toString()
+      : null,
+    handledAt: crisisFlag.handledAt,
+
+    /*
+     * KEYWORD | AI | BOTH — null on posts flagged before the AI check.
+     */
+    source: crisisFlag.source ?? null,
+    aiStatus: post.aiSafety?.status ?? null,
+    ai: formatAiAssessment(post.aiSafety),
+  };
+};
 
 const buildCrisisFlagForViewer = (
   post,
@@ -341,9 +395,7 @@ const buildCrisisFlagForViewer = (
     return null;
   }
 
-  return formatCrisisFlag(
-    post.crisisFlag
-  );
+  return formatCrisisFlag(post);
 };
 
 const getStaffGroupIds = async (user) => {
@@ -468,6 +520,13 @@ const getPostReactionData = async (
   return reactionMap;
 };
 
+/*
+ * Posts created before languages were stored have none saved; work it
+ * out from the alphabet instead.
+ */
+const getPostLanguage = (post) =>
+  post.language ?? detectLanguageByScript(post.content);
+
 const buildPostResponse = (
   post,
   viewerUser,
@@ -505,6 +564,7 @@ const buildPostResponse = (
       reactionData.myReaction,
     reactionCounts:
       reactionData.reactionCounts,
+    language: getPostLanguage(post),
     crisisFlag:
       buildCrisisFlagForViewer(
         post,
@@ -662,6 +722,8 @@ export const createPost = asyncHandler(
         contentWarnings: [
           ...contentWarnings,
         ],
+        language:
+          detectLanguageByScript(content),
         imageUrl:
           uploadedImage?.secureUrl ?? null,
         imagePublicId:
@@ -673,8 +735,15 @@ export const createPost = asyncHandler(
                 matchedTerms:
                   crisisCheck.matchedTerms,
                 flaggedAt: new Date(),
+                source:
+                  CRISIS_FLAG_SOURCE.KEYWORD,
               }
             : undefined,
+        aiSafety: {
+          status: isAiSafetyEnabled()
+            ? AI_SAFETY_STATUS.PENDING
+            : AI_SAFETY_STATUS.SKIPPED,
+        },
       });
     } catch (error) {
       await deletePostImageFromCloudinary(
@@ -683,6 +752,17 @@ export const createPost = asyncHandler(
 
       throw error;
     }
+
+    /*
+     * AI safety check. Only the post text is sent. It never fails the
+     * request: on any problem the keyword result above still stands.
+     * We wait briefly so the author can be shown support resources
+     * right away; a slower check finishes in the background.
+     */
+    const aiOutcome = await waitUpTo(
+      reviewPostWithAi(post),
+      AI_SAFETY_INLINE_WAIT_MS
+    );
 
     const populatedPost =
       await populatePostAuthor(
@@ -702,7 +782,8 @@ export const createPost = asyncHandler(
         ),
         safety: {
           crisisDetected:
-            crisisCheck.isCrisis,
+            crisisCheck.isCrisis ||
+            Boolean(aiOutcome?.isCrisis),
         },
       },
     });
@@ -792,6 +873,136 @@ export const getPostById = asyncHandler(
 
 /*
 |--------------------------------------------------------------------------
+| TRANSLATE POST
+|--------------------------------------------------------------------------
+|
+| Translates a post into English, Sinhala or Tamil with Gemini. The
+| result is saved on the post, so each language costs one AI call and
+| every later reader gets it instantly.
+|
+*/
+
+/*
+ * New translations one user may request per hour. Saved translations
+ * do not count — they cost nothing.
+ */
+const TRANSLATION_LIMIT_PER_HOUR = 30;
+const TRANSLATION_WINDOW_MS = 60 * 60 * 1000;
+
+const recentTranslationRequests = new Map();
+
+const assertTranslationAllowanceOrThrow = (userId) => {
+  const key = userId.toString();
+  const now = Date.now();
+
+  const recent = (
+    recentTranslationRequests.get(key) ?? []
+  ).filter((time) => now - time < TRANSLATION_WINDOW_MS);
+
+  if (recent.length >= TRANSLATION_LIMIT_PER_HOUR) {
+    recentTranslationRequests.set(key, recent);
+
+    throw new AppError(
+      "You have translated a lot of posts in the last hour. Please try again later.",
+      429
+    );
+  }
+
+  recent.push(now);
+  recentTranslationRequests.set(key, recent);
+};
+
+const TRANSLATION_UNAVAILABLE_MESSAGES = Object.freeze({
+  not_configured:
+    "Translation is not available on this server.",
+  rate_limited:
+    "Translation is busy right now. Please try again in a minute.",
+  paused_after_upstream_error:
+    "Translation is busy right now. Please try again in a minute.",
+  timeout:
+    "Translation took too long. Please try again.",
+});
+
+/*
+ * A post already written in the requested language has nothing to
+ * translate. Sinhala typed in English letters (SI_LATN) still can be
+ * turned into Sinhala script.
+ */
+const isAlreadyInLanguage = (postLanguage, targetLanguage) =>
+  postLanguage === targetLanguage &&
+  postLanguage !== POST_LANGUAGE.SI_LATN;
+
+export const translatePost = asyncHandler(
+  async (req, res) => {
+    const { post, group } =
+      await getPostWithGroupOrThrow(
+        req.params.postId
+      );
+
+    await assertCanAccessGroupContentOrThrow(
+      group,
+      req.user
+    );
+
+    const targetLanguage = req.body.language;
+    const sourceLanguage = getPostLanguage(post);
+
+    if (
+      isAlreadyInLanguage(
+        sourceLanguage,
+        targetLanguage
+      )
+    ) {
+      throw new AppError(
+        "This post is already in that language",
+        400
+      );
+    }
+
+    if (
+      !findSavedTranslation(post, targetLanguage)
+    ) {
+      assertTranslationAllowanceOrThrow(
+        req.user._id
+      );
+    }
+
+    const result =
+      await getOrCreatePostTranslation(
+        post,
+        targetLanguage
+      );
+
+    if (result.status !== "DONE") {
+      throw new AppError(
+        TRANSLATION_UNAVAILABLE_MESSAGES[
+          result.error
+        ] ??
+          "This post could not be translated right now. Please try again later.",
+        503
+      );
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Post translated successfully",
+      data: {
+        translation: {
+          language: targetLanguage,
+          content: result.content,
+          isCached: result.isCached,
+        },
+        sourceLanguage,
+        supportedLanguages: Object.values(
+          TRANSLATION_LANGUAGE
+        ),
+      },
+    });
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
 | CRISIS ALERTS (group staff)
 |--------------------------------------------------------------------------
 */
@@ -849,6 +1060,7 @@ export const getCrisisAlerts =
         populatePostAuthor(
           Post.find(filter)
             .sort({
+              "aiSafety.riskScore": -1,
               "crisisFlag.flaggedAt":
                 -1,
             })
@@ -983,6 +1195,7 @@ export const getNeedsResponseQueue =
         populatePostAuthor(
           Post.find(crisisFilter)
             .sort({
+              "aiSafety.riskScore": -1,
               "crisisFlag.flaggedAt":
                 -1,
             })
@@ -1125,9 +1338,7 @@ export const markCrisisAlertHandled =
             "Crisis alert marked as handled",
           data: {
             crisisFlag:
-              formatCrisisFlag(
-                post.crisisFlag
-              ),
+              formatCrisisFlag(post),
           },
         });
     }
