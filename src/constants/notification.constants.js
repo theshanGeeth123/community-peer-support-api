@@ -1,0 +1,5 @@
+export const NOTIFICATION_TYPE = Object.freeze({
+  POST_COMMENT: "POST_COMMENT",
+  COMMENT_REPLY: "COMMENT_REPLY",
+  POST_LIKE: "POST_LIKE",
+});

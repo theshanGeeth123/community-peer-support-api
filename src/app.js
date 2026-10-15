@@ -9,8 +9,12 @@ import adminRoutes from "./routes/admin.routes.js";
 import groupRoutes from "./routes/group.routes.js";
 import groupMembershipRoutes from "./routes/groupMembership.routes.js";
 import postRoutes from "./routes/post.routes.js";
+import commentReactRoutes from "./routes/commentReact.routes.js";
 import globalPostRoutes from "./routes/globalPost.routes.js";
 import reportRoutes from "./routes/report.routes.js";
+import chatbotRoutes from "./routes/chatbot.routes.js";
+import notificationRoutes from "./routes/notification.routes.js";
+import commentSuggestionRoutes from "./routes/commentSuggestion.routes.js";
 
 import {
   globalErrorHandler,
@@ -30,7 +34,11 @@ app.use(
   })
 );
 
-app.use(express.json());
+app.use(
+  express.json({
+    limit: "100kb",
+  })
+);
 
 app.use(
   express.urlencoded({
@@ -49,14 +57,110 @@ if (process.env.NODE_ENV === "development") {
 |--------------------------------------------------------------------------
 */
 
-app.use("/api/v1/health", healthRoutes);
-app.use("/api/v1/auth", authRoutes);
-app.use("/api/v1/admin", adminRoutes);
-app.use("/api/v1/groups", groupRoutes);
-app.use("/api/v1/group-memberships", groupMembershipRoutes);
-app.use("/api/v1", postRoutes);
-app.use("/api/v1/community", globalPostRoutes);
-app.use("/api/v1/reports", reportRoutes);
+app.use(
+  "/api/v1/health",
+  healthRoutes
+);
+
+app.use(
+  "/api/v1/auth",
+  authRoutes
+);
+
+app.use(
+  "/api/v1/admin",
+  adminRoutes
+);
+
+app.use(
+  "/api/v1/groups",
+  groupRoutes
+);
+
+app.use(
+  "/api/v1/group-memberships",
+  groupMembershipRoutes
+);
+
+/*
+|--------------------------------------------------------------------------
+| PUBLIC CHATBOT
+|--------------------------------------------------------------------------
+|
+| IMPORTANT:
+| This route MUST stay BEFORE:
+|
+|     app.use("/api/v1", postRoutes);
+|
+| postRoutes uses router.use(authenticate),
+| so placing the chatbot after it would incorrectly
+| require authentication for /api/v1/chatbot/message.
+|
+| No authentication is required for this chatbot.
+|
+*/
+
+app.use(
+  "/api/v1/chatbot",
+  chatbotRoutes
+);
+
+/*
+|--------------------------------------------------------------------------
+| POST ROUTES
+|--------------------------------------------------------------------------
+|
+| This router is mounted broadly on /api/v1
+| and requires authentication.
+| Keep public routes such as chatbot ABOVE this.
+|
+*/
+
+app.use(
+  "/api/v1",
+  postRoutes
+);
+
+/*
+|--------------------------------------------------------------------------
+| COMMENT / REACTION / REPLY ROUTES
+|--------------------------------------------------------------------------
+|
+| Handles:
+| - View comments
+| - Create comments
+| - Edit comments
+| - Delete comments
+| - Replies
+| - Comment hearts
+| - Comment/reply reactions
+|
+*/
+
+app.use(
+  "/api/v1",
+  commentReactRoutes
+);
+
+app.use(
+  "/api/v1",
+  commentSuggestionRoutes
+);
+
+app.use(
+  "/api/v1/community",
+  globalPostRoutes
+);
+
+app.use(
+  "/api/v1/reports",
+  reportRoutes
+);
+
+app.use(
+  "/api/v1/notifications",
+  notificationRoutes
+);
 
 /*
 |--------------------------------------------------------------------------
@@ -65,6 +169,7 @@ app.use("/api/v1/reports", reportRoutes);
 */
 
 app.use(notFoundHandler);
+
 app.use(globalErrorHandler);
 
 export default app;
