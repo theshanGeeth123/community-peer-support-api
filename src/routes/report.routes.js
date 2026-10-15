@@ -5,6 +5,7 @@ import {
   getReports,
   getReportById,
   reviewReport,
+  getReportAiReview,
 } from "../controllers/report.controller.js";
 
 import { USER_ROLES } from "../constants/auth.constants.js";
@@ -61,6 +62,14 @@ router.post(
   reviewReportValidator,
   validateRequest,
   reviewReport
+);
+
+router.get(
+  "/:reportId/ai-review",
+  authorizeRoles(USER_ROLES.MODERATOR, USER_ROLES.ADMIN),
+  reportIdValidator,
+  validateRequest,
+  getReportAiReview
 );
 
 export default router;
