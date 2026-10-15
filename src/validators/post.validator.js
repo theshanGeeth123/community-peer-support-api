@@ -1,6 +1,10 @@
 import { body, param, query } from "express-validator";
 
-import { CONTENT_WARNING, POST_SORT } from "../constants/post.constants.js";
+import {
+  CONTENT_WARNING,
+  POST_SORT,
+  TRANSLATION_LANGUAGE,
+} from "../constants/post.constants.js";
 
 export const groupIdParamValidator = [
   param("groupId").isMongoId().withMessage("Invalid group ID"),
@@ -8,6 +12,16 @@ export const groupIdParamValidator = [
 
 export const postIdParamValidator = [
   param("postId").isMongoId().withMessage("Invalid post ID"),
+];
+
+export const translatePostValidator = [
+  param("postId").isMongoId().withMessage("Invalid post ID"),
+
+  body("language")
+    .isIn(Object.values(TRANSLATION_LANGUAGE))
+    .withMessage(
+      `Language must be one of: ${Object.values(TRANSLATION_LANGUAGE).join(", ")}`
+    ),
 ];
 
 export const commentIdParamValidator = [
