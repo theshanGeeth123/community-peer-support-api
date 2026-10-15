@@ -13,6 +13,7 @@ import {
   togglePostLike,
   togglePostPin,
   togglePostReaction,
+  translatePost,
 } from "../controllers/post.controller.js";
 
 import { USER_ROLES } from "../constants/auth.constants.js";
@@ -32,6 +33,7 @@ import {
   listNeedsResponseValidator,
   listPostsValidator,
   postIdParamValidator,
+  translatePostValidator,
 } from "../validators/post.validator.js";
 
 const router = express.Router();
@@ -183,6 +185,16 @@ router.post(
   postIdParamValidator,
   validateRequest,
   togglePostPin
+);
+
+/*
+ * Translate a post into English, Sinhala or Tamil (body: { language }).
+ */
+router.post(
+  "/posts/:postId/translate",
+  translatePostValidator,
+  validateRequest,
+  translatePost
 );
 
 /*
